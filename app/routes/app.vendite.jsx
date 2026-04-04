@@ -187,7 +187,7 @@ export default function Vendite() {
               <Text as="p" tone="subdued">Nessun ordine nel periodo.</Text>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={byDay} margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
+                <AreaChart data={byDay} margin={{ top: 5, right: 40, left: 10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorRev2" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#008060" stopOpacity={0.3} />
@@ -196,10 +196,11 @@ export default function Vendite() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(5)} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `€${v.toFixed(0)}`} width={65} />
+                  <YAxis yAxisId={0} tick={{ fontSize: 11 }} tickFormatter={(v) => `€${v.toFixed(0)}`} width={65} />
+                  <YAxis yAxisId={1} orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
                   <Tooltip content={<RevenueTooltip currency={currency} />} />
-                  <Area type="monotone" dataKey="revenue" name="Fatturato" stroke="#008060" fill="url(#colorRev2)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="orders" name="Ordini" stroke="#1E90FF" fill="none" strokeWidth={1.5} strokeDasharray="4 4" yAxisId={1} />
+                  <Area yAxisId={0} type="monotone" dataKey="revenue" name="Fatturato" stroke="#008060" fill="url(#colorRev2)" strokeWidth={2} />
+                  <Area yAxisId={1} type="monotone" dataKey="orders" name="Ordini" stroke="#1E90FF" fill="none" strokeWidth={1.5} strokeDasharray="4 4" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
