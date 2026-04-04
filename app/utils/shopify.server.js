@@ -5,12 +5,33 @@
 
 // ─── ORDINI ────────────────────────────────────────────────────────────────────
 
+const FINANCIAL_STATUS_MAP = {
+  "Authorized": "AUTHORIZED",
+  "Expired": "EXPIRED",
+  "Paid": "PAID",
+  "Partially paid": "PARTIALLY_PAID",
+  "Partially refunded": "PARTIALLY_REFUNDED",
+  "Pending": "PENDING",
+  "Refunded": "REFUNDED",
+  "Voided": "VOIDED",
+};
+
+const FULFILLMENT_STATUS_MAP = {
+  "Fulfilled": "FULFILLED",
+  "Unfulfilled": "UNFULFILLED",
+  "Partially fulfilled": "PARTIAL",
+  "In progress": "IN_PROGRESS",
+  "On hold": "ON_HOLD",
+  "Scheduled": "SCHEDULED",
+  "Open": "OPEN",
+};
+
 const ORDER_FIELDS = `
   id
   name
   createdAt
-  financialStatus
-  fulfillmentStatus
+  displayFinancialStatus
+  displayFulfillmentStatus
   totalPriceSet { shopMoney { amount currencyCode } }
   subtotalPriceSet { shopMoney { amount } }
   totalDiscountsSet { shopMoney { amount } }
@@ -75,7 +96,12 @@ export async function fetchOrders(admin, { startDate, endDate }) {
     const json = await response.json();
     const data = json.data?.orders;
     if (!data) break;
-    orders.push(...data.edges.map((e) => e.node));
+    orders.push(...data.edges.map((e) => {
+      const node = e.node;
+      node.financialStatus = FINANCIAL_STATUS_MAP[node.displayFinancialStatus] || node.displayFinancialStatus || "UNKNOWN";
+      node.fulfillmentStatus = FULFILLMENT_STATUS_MAP[node.displayFulfillmentStatus] || node.displayFulfillmentStatus || null;
+      return node;
+    }));
     hasNextPage = data.pageInfo.hasNextPage;
     cursor = data.pageInfo.endCursor;
   }
