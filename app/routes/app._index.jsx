@@ -11,9 +11,9 @@ import {
 import { authenticate } from "../shopify.server";
 import {
   fetchOrders, groupOrdersByDay, calcKPI, topProductsByRevenue,
-  ordersByFinancialStatus, getDateRange, getPrevPeriod,
-  formatCurrency, formatDate, daysAgo,
+  ordersByFinancialStatus,
 } from "../utils/shopify.server";
+import { getDateRange, getPrevPeriod, formatCurrency, formatDate, daysAgo } from "../utils/format";
 
 // ─── LOADER ────────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {

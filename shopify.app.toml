@@ -1,9 +1,9 @@
 # Configurazione aggiornata dopo registrazione nuova app su Shopify Partners
 # client_id e redirect_urls vanno aggiornati dopo la creazione dell'app
 
-client_id = "AGGIORNARE_DOPO_REGISTRAZIONE"
-name = "Ferro Reports"
-application_url = "https://ferro-reports.vercel.app"
+client_id = "a01db05080d36e5f51a8eb989b80be48"
+name = "Analytics"
+application_url = "https://analytics-ferrogioielli.vercel.app"
 embedded = true
 
 [build]
@@ -24,4 +24,4 @@ api_version = "2026-07"
 scopes = "read_orders,read_products,read_customers,read_inventory"
 
 [auth]
-redirect_urls = [ "https://ferro-reports.vercel.app/auth/callback" ]
+redirect_urls = [ "https://analytics-ferrogioielli.vercel.app/auth/callback" ]

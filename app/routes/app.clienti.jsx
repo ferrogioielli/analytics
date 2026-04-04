@@ -9,7 +9,8 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchCustomers, fetchOrders, formatCurrency, formatDate, daysAgo, getPrevPeriod } from "../utils/shopify.server";
+import { fetchCustomers, fetchOrders } from "../utils/shopify.server";
+import { formatCurrency, formatDate, daysAgo, getPrevPeriod } from "../utils/format";
 
 const COLORS = ["#008060", "#1E90FF", "#FFB400", "#FF4D4D"];
 

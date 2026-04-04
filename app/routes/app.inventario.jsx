@@ -10,7 +10,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchProducts, formatCurrency } from "../utils/shopify.server";
+import { fetchProducts } from "../utils/shopify.server";
+import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);

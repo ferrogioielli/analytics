@@ -10,10 +10,8 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import {
-  fetchOrders, groupOrdersByDay, calcKPI, getPrevPeriod,
-  formatCurrency, formatDate, formatStatus, daysAgo,
-} from "../utils/shopify.server";
+import { fetchOrders, groupOrdersByDay, calcKPI } from "../utils/shopify.server";
+import { getPrevPeriod, formatCurrency, formatDate, formatStatus, daysAgo } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);

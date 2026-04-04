@@ -11,10 +11,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import {
-  fetchProducts, fetchOrders, topProductsByRevenue,
-  formatCurrency, daysAgo,
-} from "../utils/shopify.server";
+import { fetchProducts, fetchOrders, topProductsByRevenue } from "../utils/shopify.server";
+import { formatCurrency, daysAgo } from "../utils/format";
 
 const COLORS = ["#008060","#1E90FF","#FFB400","#FF4D4D","#9B59B6","#2ECC71","#E67E22","#1ABC9C"];
 
