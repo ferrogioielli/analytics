@@ -1,0 +1,27 @@
+# Configurazione aggiornata dopo registrazione nuova app su Shopify Partners
+# client_id e redirect_urls vanno aggiornati dopo la creazione dell'app
+
+client_id = "AGGIORNARE_DOPO_REGISTRAZIONE"
+name = "Ferro Reports"
+application_url = "https://ferro-reports.vercel.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+[access_scopes]
+scopes = "read_orders,read_products,read_customers,read_inventory"
+
+[auth]
+redirect_urls = [ "https://ferro-reports.vercel.app/auth/callback" ]
