@@ -209,7 +209,7 @@ export async function fetchCustomers(admin) {
     const response = await admin.graphql(
       `#graphql
       query getCustomers($first: Int!, $after: String) {
-        customers(first: $first, after: $after, sortKey: TOTAL_SPENT, reverse: true) {
+        customers(first: $first, after: $after, sortKey: CREATED_AT, reverse: true) {
           pageInfo { hasNextPage endCursor }
           edges {
             node {
