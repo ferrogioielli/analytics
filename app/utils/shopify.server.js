@@ -189,7 +189,7 @@ const CUSTOMER_FIELDS = `
   email
   createdAt
   numberOfOrders
-  totalSpentV2 { amount currencyCode }
+  amountSpent { amount currencyCode }
   lastOrder { createdAt name }
   tags
 `;

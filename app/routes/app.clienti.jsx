@@ -47,11 +47,11 @@ export const loader = async ({ request }) => {
     .slice(-12);
 
   // LTV medio
-  const totalSpent = customers.reduce((s, c) => s + parseFloat(c.totalSpentV2?.amount || 0), 0);
+  const totalSpent = customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0);
   const ltv = customers.length > 0 ? totalSpent / customers.length : 0;
 
   // Top per spesa
-  const topCustomers = [...customers].sort((a, b) => parseFloat(b.totalSpentV2?.amount || 0) - parseFloat(a.totalSpentV2?.amount || 0)).slice(0, 5);
+  const topCustomers = [...customers].sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0)).slice(0, 5);
 
   const pieData = [
     { name: "Nuovi nel periodo", value: newInPeriod.length },
@@ -121,7 +121,7 @@ export default function Clienti() {
     `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
     c.email || "—",
     c.numberOfOrders.toString(),
-    formatCurrency(parseFloat(c.totalSpentV2?.amount || 0), c.totalSpentV2?.currencyCode),
+    formatCurrency(parseFloat(c.amountSpent?.amount || 0), c.amountSpent?.currencyCode),
     c.lastOrder ? formatDate(c.lastOrder.createdAt) : "—",
     formatDate(c.createdAt),
   ]);
@@ -130,7 +130,7 @@ export default function Clienti() {
     Nome: `${c.firstName || ""} ${c.lastName || ""}`.trim(),
     Email: c.email || "",
     "N. ordini": c.numberOfOrders,
-    "Spesa totale": parseFloat(c.totalSpentV2?.amount || 0).toFixed(2),
+    "Spesa totale": parseFloat(c.amountSpent?.amount || 0).toFixed(2),
     "Ultimo ordine": c.lastOrder ? formatDate(c.lastOrder.createdAt) : "",
     "Data registrazione": formatDate(c.createdAt),
   }));
