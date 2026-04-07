@@ -1,6 +1,6 @@
 import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable, TextField,
 } from "@shopify/polaris";
@@ -105,6 +105,8 @@ export default function Clienti() {
 
   const [search, setSearch] = useState("");
   const [minOrders, setMinOrders] = useState("");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
   const [top10Period, setTop10Period] = useState("tutto"); // oggi | settimana | mese | tutto
 
   // ── Top 10 filtrato per periodo ──
@@ -174,7 +176,13 @@ export default function Clienti() {
     return true;
   }), [customers, search, minOrders]);
 
-  const tableRows = filtered.slice(0, 200).map((c) => [
+  // Reset pagina quando cambia il filtro
+  useEffect(() => { setPage(0); }, [filtered]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  const tableRows = pageData.map((c) => [
     `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
     c.email || "—",
     c.numberOfOrders.toString(),
@@ -372,7 +380,7 @@ export default function Clienti() {
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center" wrap>
               <Text as="h2" variant="headingMd">
-                Tutti i clienti ({filtered.length}{filtered.length > 200 ? ", mostrando i primi 200" : ""})
+                Tutti i clienti ({filtered.length})
               </Text>
               <InlineStack gap="200" wrap>
                 <div style={{ minWidth: 220 }}>
@@ -383,6 +391,15 @@ export default function Clienti() {
                 </div>
               </InlineStack>
             </InlineStack>
+            {totalPages > 1 && (
+              <InlineStack align="space-between" blockAlign="center">
+                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
+                <Text as="span" variant="bodySm">
+                  Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} di {filtered.length})
+                </Text>
+                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
+              </InlineStack>
+            )}
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessun cliente trovato.</Text>
             ) : (
@@ -391,6 +408,13 @@ export default function Clienti() {
                 headings={["Nome","Email","Ordini","Spesa totale","Ultimo ordine","Registrato il"]}
                 rows={tableRows}
               />
+            )}
+            {totalPages > 1 && (
+              <InlineStack align="center" gap="200" blockAlign="center">
+                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
+                <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
+                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
+              </InlineStack>
             )}
           </BlockStack>
         </Card>
