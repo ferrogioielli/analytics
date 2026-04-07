@@ -168,6 +168,8 @@ export default function Vendite() {
     return true;
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
+  const filteredTotal = filtered.reduce((s, o) => s + parseFloat(o.totalPriceSet.shopMoney.amount), 0);
+
   const chartData = useMemo(() => groupByPeriod(byDay, groupBy), [byDay, groupBy]);
 
   const maxOrder = orders.length > 0
@@ -331,11 +333,19 @@ export default function Vendite() {
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessun ordine trovato.</Text>
             ) : (
-              <DataTable
-                columnContentTypes={["text", "text", "text", "text", "text", "numeric", "text"]}
-                headings={["Data", "Ordine", "Cliente", "Pagamento", "Consegna", "Totale", ""]}
-                rows={tableRows}
-              />
+              <>
+                <DataTable
+                  columnContentTypes={["text", "text", "text", "text", "text", "numeric", "text"]}
+                  headings={["Data", "Ordine", "Cliente", "Pagamento", "Consegna", "Totale", ""]}
+                  rows={tableRows}
+                />
+                <div style={{ borderTop: "2px solid #e1e3e5", paddingTop: 10, marginTop: 4 }}>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="subdued">{filtered.length} ordini filtrati</Text>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">Totale: {formatCurrency(filteredTotal, currency)}</Text>
+                  </InlineStack>
+                </div>
+              </>
             )}
           </BlockStack>
         </Card>

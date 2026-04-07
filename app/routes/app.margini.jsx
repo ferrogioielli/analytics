@@ -6,7 +6,7 @@ import {
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
 import { fetchProducts, fetchOrders } from "../utils/shopify.server";
@@ -186,7 +186,7 @@ export default function Margini() {
     p.units.toString(),
     formatCurrency(p.revenue, currency),
     p.hasCost ? formatCurrency(p.totalCost, currency) : "—",
-    p.hasCost ? formatCurrency(p.profit, currency) : "—",
+    p.hasCost ? <span key={p.id + "pr"} style={{ color: p.profit < 0 ? "#d82c0d" : undefined, fontWeight: p.profit < 0 ? 600 : undefined }}>{formatCurrency(p.profit, currency)}</span> : "—",
     <MarginBadge key={p.id} margin={p.margin} />,
   ]);
 
@@ -225,7 +225,9 @@ export default function Margini() {
         <Layout>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Profitto totale periodo</Text>
+              <span title="Fatturato totale meno costi dei prodotti venduti nel periodo. Richiede il costo unitario impostato in Shopify." style={{ cursor: "help" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Profitto totale periodo ⓘ</Text>
+              </span>
               <Text as="p" variant="headingLg" fontWeight="bold">
                 <span style={{ color: totalProfit >= 0 ? "#008060" : "#d82c0d" }}>{formatCurrency(totalProfit, currency)}</span>
               </Text>
@@ -233,7 +235,9 @@ export default function Margini() {
           </Layout.Section>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Margine medio ponderato</Text>
+              <span title="(Fatturato - Costi) / Fatturato, pesato sul volume venduto. Verde ≥40%, giallo 20–40%, rosso <20%." style={{ cursor: "help" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Margine medio ponderato ⓘ</Text>
+              </span>
               <Text as="p" variant="headingLg" fontWeight="bold">
                 <span style={{ color: avgMargin === null ? undefined : avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060" }}>
                   {avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—"}
@@ -243,14 +247,18 @@ export default function Margini() {
           </Layout.Section>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Prodotto più redditizio</Text>
+              <span title="Il prodotto con il maggior profitto assoluto nel periodo (non margine %)." style={{ cursor: "help" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Prodotto più redditizio ⓘ</Text>
+              </span>
               <Text as="p" variant="headingMd" fontWeight="bold">{topProduct?.title || "—"}</Text>
               {topProduct && <Text as="p" variant="bodySm" tone="subdued">{formatCurrency(topProduct.profit, currency)}</Text>}
             </BlockStack></Card>
           </Layout.Section>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Brand più redditizio</Text>
+              <span title="Il brand con il maggior profitto assoluto nel periodo." style={{ cursor: "help" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Brand più redditizio ⓘ</Text>
+              </span>
               <Text as="p" variant="headingMd" fontWeight="bold">{topBrand?.brand || "—"}</Text>
               {topBrand && <Text as="p" variant="bodySm" tone="subdued">{formatCurrency(topBrand.profit, currency)}</Text>}
             </BlockStack></Card>
@@ -293,9 +301,10 @@ export default function Margini() {
                       <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={120} />
                       <Tooltip formatter={(v) => v.toFixed(1) + "%"} />
+                      <ReferenceLine x={40} stroke="#008060" strokeDasharray="4 4" label={{ value: "Obiettivo 40%", position: "insideTopRight", fontSize: 10, fill: "#008060" }} />
                       <Bar dataKey="margine" name="Margine %" radius={[0, 3, 3, 0]}>
                         {brandChartData.map((b, i) => (
-                          <rect key={i} fill={b.margine >= 40 ? "#008060" : b.margine >= 20 ? "#FFB400" : "#E74C3C"} />
+                          <Cell key={i} fill={b.margine >= 40 ? "#008060" : b.margine >= 20 ? "#FFB400" : "#E74C3C"} />
                         ))}
                       </Bar>
                     </BarChart>

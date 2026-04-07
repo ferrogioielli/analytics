@@ -51,7 +51,7 @@ export const loader = async ({ request }) => {
   const ltv = customers.length > 0 ? totalSpent / customers.length : 0;
 
   // Top per spesa
-  const topCustomers = [...customers].sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0)).slice(0, 5);
+  const topCustomers = [...customers].sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0)).slice(0, 10);
 
   const pieData = [
     { name: "Nuovi nel periodo", value: newInPeriod.length },
@@ -247,9 +247,20 @@ export default function Clienti() {
                     </InlineStack>
                   );
                 })}
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Champions: attivi ≤30gg, ≥3 ordini, spesa alta. A rischio: inattivi &gt;90gg con ≥2 ordini.
-                </Text>
+                <div style={{ borderTop: "1px solid #e1e3e5", paddingTop: 8, marginTop: 4 }}>
+                  {[
+                    { seg: "Champions", desc: "Ultimo ordine ≤30gg, ≥3 ordini, spesa sopra media — clienti più fedeli" },
+                    { seg: "Abituali", desc: "Ultimo ordine ≤60gg, ≥2 ordini — acquistano regolarmente" },
+                    { seg: "Nuovi", desc: "Primo e unico ordine negli ultimi 30 giorni" },
+                    { seg: "Occasionali", desc: "Non rientrano in altre categorie" },
+                    { seg: "A rischio", desc: "Inattivi >90gg ma con ≥2 ordini — da ricontattare" },
+                    { seg: "Persi", desc: "Inattivi da oltre 180 giorni" },
+                  ].map(({ seg, desc }) => (
+                    <Text key={seg} as="p" variant="bodySm" tone="subdued" title={desc} style={{ cursor: "help", marginBottom: 2 }}>
+                      <strong>{seg}</strong>: {desc}
+                    </Text>
+                  ))}
+                </div>
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -257,7 +268,7 @@ export default function Clienti() {
           <Layout.Section variant="twoThirds">
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top 5 clienti per spesa</Text>
+                <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
                 <DataTable
                   columnContentTypes={["text","text","numeric","numeric"]}
                   headings={["Nome","Email","Ordini","Spesa totale"]}

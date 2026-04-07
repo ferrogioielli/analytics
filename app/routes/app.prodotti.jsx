@@ -123,6 +123,7 @@ export default function Prodotti() {
 
   const totalInventory = products.reduce((s, p) => s + (p.totalInventory || 0), 0);
   const activeProducts = products.filter((p) => p.status === "ACTIVE").length;
+  const totalRevenue = topByRevenue.reduce((s, p) => s + p.revenue, 0);
 
   const tableRows = filtered.map((p) => {
     const totalQty = p.variants.edges.reduce((s, e) => s + (e.node.inventoryQuantity || 0), 0);
@@ -141,10 +142,13 @@ export default function Prodotti() {
         {p.status === "ACTIVE" ? "Attivo" : p.status === "DRAFT" ? "Bozza" : "Archiviato"}
       </Badge>,
       p.variants.edges.length.toString(),
-      totalQty.toString(),
+      <span key={p.id + "qty"} style={{ color: totalQty <= 0 ? "#d82c0d" : totalQty <= 5 ? "#b98900" : "#008060", fontWeight: 500 }}>
+        {totalQty}
+      </span>,
       formatCurrency(avgPrice),
       soldData ? soldData.units.toString() : "0",
       soldData ? formatCurrency(soldData.revenue) : "€0",
+      soldData && totalRevenue > 0 ? (soldData.revenue / totalRevenue * 100).toFixed(1) + "%" : "—",
     ];
   });
 
@@ -308,8 +312,8 @@ export default function Prodotti() {
                   <Text as="p" tone="subdued">Nessun prodotto trovato.</Text>
                 ) : (
                   <DataTable
-                    columnContentTypes={["text","text","text","text","numeric","numeric","numeric","numeric","numeric"]}
-                    headings={["Prodotto","Brand","Tipo","Status","Varianti","Stock","Prezzo medio","Venduto","Fatturato"]}
+                    columnContentTypes={["text","text","text","text","numeric","numeric","numeric","numeric","numeric","numeric"]}
+                    headings={["Prodotto","Brand","Tipo","Status","Varianti","Stock","Prezzo medio","Venduto","Fatturato","% Fatt."]}
                     rows={tableRows}
                   />
                 )}

@@ -133,7 +133,7 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
   );
 }
 
-const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue"];
+const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue", null];
 
 export default function Inventario() {
   const { variants, vendors, types, allTags } = useLoaderData();
@@ -235,6 +235,7 @@ export default function Inventario() {
     <StockBadge key={v.variantId + "s"} qty={v.qty} threshold={thr} />,
     v.cost > 0 ? formatCurrency(v.stockValue) : "—",
     formatCurrency(v.salesValue),
+    filteredTotalValue > 0 && v.cost > 0 ? (v.stockValue / filteredTotalValue * 100).toFixed(1) + "%" : "—",
   ]);
 
   const exportRows = sorted.map((v) => ({
@@ -474,13 +475,15 @@ export default function Inventario() {
               <Text as="p" tone="subdued">Nessuna variante trovata con i filtri selezionati.</Text>
             ) : (
               <DataTable
-                columnContentTypes={["text","text","text","text","text","numeric","numeric","numeric","text","numeric","numeric"]}
-                headings={["Prodotto","Variante","SKU","Brand","Tipo","Costo unitario","Prezzo vendita","Margine %","Stock","Val. magazzino","Val. vendita"]}
+                columnContentTypes={["text","text","text","text","text","numeric","numeric","numeric","text","numeric","numeric","numeric"]}
+                headings={["Prodotto","Variante","SKU","Brand","Tipo","Costo unitario","Prezzo vendita","Margine %","Stock","Val. magazzino","Val. vendita","% Val."]}
                 rows={tableRows}
-                sortable={[false, false, false, true, true, true, true, true, true, true, true]}
+                sortable={[false, false, false, true, true, true, true, true, true, true, true, false]}
                 defaultSortDirection="descending"
                 initialSortColumnIndex={9}
                 onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
+                totals={["", "", "", "", "", "", "", "", filteredTotalQty.toLocaleString("it-IT"), filteredTotalValue > 0 ? formatCurrency(filteredTotalValue) : "", formatCurrency(filteredSalesValue), "100%"]}
+                showTotalsInFooter
               />
             )}
             {totalPages > 1 && (
