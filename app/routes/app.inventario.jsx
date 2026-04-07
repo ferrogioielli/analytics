@@ -10,12 +10,26 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchProducts } from "../utils/shopify.server";
+import { fetchProducts, fetchOrders } from "../utils/shopify.server";
 import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const products = await fetchProducts(admin);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [products, recentOrders] = await Promise.all([
+    fetchProducts(admin),
+    fetchOrders(admin, { startDate: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), endDate: today }),
+  ]);
+
+  // SKU → qty venduta negli ultimi 30 giorni
+  const soldMap = new Map();
+  for (const order of recentOrders) {
+    for (const edge of order.lineItems.edges) {
+      const sku = edge.node.variant?.sku;
+      if (sku) soldMap.set(sku, (soldMap.get(sku) || 0) + edge.node.quantity);
+    }
+  }
 
   const variants = [];
   for (const p of products) {
@@ -25,6 +39,10 @@ export const loader = async ({ request }) => {
       const qty = v.inventoryQuantity || 0;
       const price = parseFloat(v.price || 0);
       const margin = cost > 0 && price > 0 ? ((price - cost) / price) * 100 : null;
+      const soldQty = v.sku ? (soldMap.get(v.sku) || 0) : 0;
+      const rotation = qty > 0 ? soldQty / qty : null;
+      const isDead = qty > 0 && soldQty === 0;
+
       variants.push({
         productId: p.id,
         productTitle: p.title,
@@ -41,6 +59,9 @@ export const loader = async ({ request }) => {
         margin,
         stockValue: cost * qty,
         salesValue: price * qty,
+        soldQty,
+        rotation,
+        isDead,
       });
     }
   }
@@ -132,7 +153,15 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
   );
 }
 
-const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue"];
+function RotationBadge({ rotation, isDead, qty }) {
+  if (qty <= 0) return <span style={{ color: "#999" }}>—</span>;
+  if (isDead) return <Badge tone="critical">Fermo</Badge>;
+  if (rotation >= 1) return <Badge tone="success">{rotation.toFixed(1)}x</Badge>;
+  if (rotation >= 0.2) return <Badge tone="attention">{rotation.toFixed(2)}x</Badge>;
+  return <Badge tone="warning">{rotation.toFixed(2)}x</Badge>;
+}
+
+const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue", "soldQty", "rotation"];
 
 export default function Inventario() {
   const { variants, vendors, types, allTags } = useLoaderData();
@@ -143,6 +172,7 @@ export default function Inventario() {
   const [filterTypes, setFilterTypes] = useState(() => types);
   const [filterTags, setFilterTags] = useState(() => allTags);
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterDead, setFilterDead] = useState(false);
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -162,13 +192,14 @@ export default function Inventario() {
     if (filterTypes.length < types.length && !filterTypes.includes(v.productType)) return false;
     // Stato pubblicazione
     if (filterStatus && v.status !== filterStatus) return false;
+    if (filterDead && !v.isDead) return false;
     // Tag: nasconde le varianti che hanno un tag deselezionato
     if (filterTags.length < allTags.length) {
       const excluded = allTags.filter((t) => !filterTags.includes(t));
       if (excluded.some((t) => v.tags.includes(t))) return false;
     }
     return true;
-  }), [variants, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags, thr]);
+  }), [variants, search, filterVendors, filterTypes, filterStatus, filterTags, filterDead, vendors, types, allTags, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -191,6 +222,7 @@ export default function Inventario() {
   const filteredTotalQty = useMemo(() => filtered.reduce((s, v) => s + v.qty, 0), [filtered]);
   const filteredOutOfStock = useMemo(() => filtered.filter((v) => v.qty <= 0).length, [filtered]);
   const filteredLowStock = useMemo(() => filtered.filter((v) => v.qty > 0 && v.qty <= thr).length, [filtered, thr]);
+  const filteredDeadStock = useMemo(() => filtered.filter((v) => v.isDead).length, [filtered]);
   const avgMargin = useMemo(() => {
     const withCost = filtered.filter((v) => v.margin !== null);
     if (!withCost.length) return null;
@@ -236,6 +268,8 @@ export default function Inventario() {
     <StockBadge key={v.variantId + "s"} qty={v.qty} threshold={thr} />,
     v.cost > 0 ? formatCurrency(v.stockValue) : "—",
     formatCurrency(v.salesValue),
+    v.soldQty.toString(),
+    <RotationBadge key={v.variantId + "r"} rotation={v.rotation} isDead={v.isDead} qty={v.qty} />,
   ]);
 
   const exportRows = sorted.map((v) => ({
@@ -250,6 +284,9 @@ export default function Inventario() {
     Quantità: v.qty,
     "Valore magazzino (costo)": v.cost > 0 ? v.stockValue.toFixed(2) : "",
     "Valore a prezzo vendita": v.salesValue.toFixed(2),
+    "Venduto 30gg": v.soldQty,
+    "Rotazione 30gg": v.rotation !== null ? v.rotation.toFixed(2) : "",
+    "Stock fermo": v.isDead ? "Sì" : "No",
   }));
 
   const brandExportRows = brandSummary.map((b) => ({
@@ -280,6 +317,7 @@ export default function Inventario() {
     setFilterTypes(types);
     setFilterTags(allTags);
     setFilterStatus("");
+    setFilterDead(false);
   };
 
   return (
@@ -369,7 +407,7 @@ export default function Inventario() {
         </Card>
 
         {/* ── KPI DINAMICI ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
           {[
             { label: `Pezzi in stock${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
             { label: `Valore magazzino (costo)${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredTotalValue) },
@@ -384,13 +422,24 @@ export default function Inventario() {
               value: `${filteredOutOfStock} / ${filteredLowStock}`,
               color: filteredOutOfStock > 0 ? "#d82c0d" : filteredLowStock > 0 ? "#b98900" : undefined,
             },
-          ].map(({ label, value, color }) => (
+            {
+              label: "Stock fermi (0 vendite 30gg)",
+              value: filteredDeadStock.toString(),
+              color: filteredDeadStock > 0 ? "#d82c0d" : undefined,
+              clickable: filteredDeadStock > 0,
+            },
+          ].map(({ label, value, color, clickable }) => (
             <Card key={label}>
               <BlockStack gap="100">
                 <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
                 <Text as="p" variant="headingLg" fontWeight="bold">
                   <span style={color ? { color } : {}}>{value}</span>
                 </Text>
+                {clickable && (
+                  <Button size="slim" plain onClick={() => setFilterDead((v) => !v)}>
+                    {filterDead ? "Mostra tutti" : "Filtra fermi"}
+                  </Button>
+                )}
               </BlockStack>
             </Card>
           ))}
@@ -480,10 +529,10 @@ export default function Inventario() {
               <Text as="p" tone="subdued">Nessuna variante trovata con i filtri selezionati.</Text>
             ) : (
               <DataTable
-                columnContentTypes={["text","text","text","text","text","numeric","numeric","numeric","text","numeric","numeric"]}
-                headings={["Prodotto","Variante","SKU","Brand","Tipo","Costo unitario","Prezzo vendita","Margine %","Stock","Val. magazzino","Val. vendita"]}
+                columnContentTypes={["text","text","text","text","text","numeric","numeric","numeric","text","numeric","numeric","numeric","text"]}
+                headings={["Prodotto","Variante","SKU","Brand","Tipo","Costo unitario","Prezzo vendita","Margine %","Stock","Val. magazzino","Val. vendita","Venduto 30gg","Rotazione"]}
                 rows={tableRows}
-                sortable={[false, false, false, true, true, true, true, true, true, true, true]}
+                sortable={[false, false, false, true, true, true, true, true, true, true, true, true, true]}
                 defaultSortDirection="descending"
                 initialSortColumnIndex={9}
                 onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}

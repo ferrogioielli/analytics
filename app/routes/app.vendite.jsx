@@ -20,15 +20,31 @@ export const loader = async ({ request }) => {
   const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
   const prev = getPrevPeriod(start, end);
 
-  const [orders, prevOrders] = await Promise.all([
+  // Anno precedente: stesso periodo -1 anno
+  const yoyStart = new Date(start); yoyStart.setFullYear(yoyStart.getFullYear() - 1);
+  const yoyEnd = new Date(end); yoyEnd.setFullYear(yoyEnd.getFullYear() - 1);
+
+  const [orders, prevOrders, yoyOrders] = await Promise.all([
     fetchOrders(admin, { startDate: start, endDate: end }),
     fetchOrders(admin, { startDate: prev.start, endDate: prev.end }),
+    fetchOrders(admin, { startDate: yoyStart.toISOString().slice(0, 10), endDate: yoyEnd.toISOString().slice(0, 10) }),
   ]);
 
   const kpi = calcKPI(orders, prevOrders);
   const byDay = groupOrdersByDay(orders);
+  const yoyByDay = groupOrdersByDay(yoyOrders);
 
-  return json({ orders, kpi, byDay, start, end, currency: kpi.currency });
+  // Unisci per posizione (giorno 1 = primo giorno del periodo)
+  const mergedByDay = byDay.map((d, i) => ({
+    ...d,
+    prevRevenue: yoyByDay[i]?.revenue || 0,
+    prevOrders: yoyByDay[i]?.orders || 0,
+  }));
+
+  const yoyRevenue = yoyOrders.reduce((s, o) => s + parseFloat(o.totalPriceSet.shopMoney.amount), 0);
+  const yoyDelta = yoyRevenue > 0 ? ((kpi.revenue - yoyRevenue) / yoyRevenue) * 100 : null;
+
+  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta });
 };
 
 function DateRangePicker({ start, end }) {
@@ -99,7 +115,7 @@ function RevenueTooltip({ active, payload, label, currency }) {
       <p style={{ margin: 0, fontWeight: 600, fontSize: 12 }}>{label}</p>
       {payload.map((p, i) => (
         <p key={i} style={{ margin: "2px 0", fontSize: 12, color: p.color }}>
-          {p.name}: {p.name === "Fatturato" ? formatCurrency(p.value, currency) : p.value}
+          {p.name}: {p.name === "Fatturato" || p.name === "Anno prec." ? formatCurrency(p.value, currency) : p.value}
         </p>
       ))}
     </div>
@@ -126,7 +142,7 @@ function exportExcel(rows, filename) {
 }
 
 export default function Vendite() {
-  const { orders, kpi, byDay, start, end, currency } = useLoaderData();
+  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta } = useLoaderData();
   const [filterStatus, setFilterStatus] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [groupBy, setGroupBy] = useState("day");
@@ -218,6 +234,21 @@ export default function Vendite() {
             </BlockStack></Card>
           </Layout.Section>
         </Layout>
+        <Layout>
+          <Layout.Section variant="oneHalf">
+            <Card><BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Stesso periodo anno precedente</Text>
+              <InlineStack gap="300" blockAlign="center">
+                <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(yoyRevenue, currency)}</Text>
+                {yoyDelta !== null && (
+                  <Badge tone={yoyDelta >= 0 ? "success" : "critical"}>
+                    {yoyDelta >= 0 ? "▲" : "▼"} {Math.abs(yoyDelta).toFixed(1)}% vs anno prec.
+                  </Badge>
+                )}
+              </InlineStack>
+            </BlockStack></Card>
+          </Layout.Section>
+        </Layout>
 
         {/* Grafico fatturato */}
         <Card>
@@ -251,6 +282,7 @@ export default function Vendite() {
                   <YAxis yAxisId={1} orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
                   <Tooltip content={<RevenueTooltip currency={currency} />} />
                   <Area yAxisId={0} type="monotone" dataKey="revenue" name="Fatturato" stroke="#008060" fill="url(#colorRev2)" strokeWidth={2} />
+                  <Area yAxisId={0} type="monotone" dataKey="prevRevenue" name="Anno prec." stroke="#cccccc" fill="none" strokeWidth={1.5} strokeDasharray="4 4" />
                   <Area yAxisId={1} type="monotone" dataKey="orders" name="Ordini" stroke="#1E90FF" fill="none" strokeWidth={1.5} strokeDasharray="4 4" />
                 </AreaChart>
               </ResponsiveContainer>
