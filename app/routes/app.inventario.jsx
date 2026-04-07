@@ -220,8 +220,6 @@ export default function Inventario() {
   const filteredTotalValue = useMemo(() => filtered.reduce((s, v) => s + v.stockValue, 0), [filtered]);
   const filteredSalesValue = useMemo(() => filtered.reduce((s, v) => s + v.salesValue, 0), [filtered]);
   const filteredTotalQty = useMemo(() => filtered.reduce((s, v) => s + v.qty, 0), [filtered]);
-  const filteredOutOfStock = useMemo(() => filtered.filter((v) => v.qty <= 0).length, [filtered]);
-  const filteredLowStock = useMemo(() => filtered.filter((v) => v.qty > 0 && v.qty <= thr).length, [filtered, thr]);
   const filteredDeadStock = useMemo(() => filtered.filter((v) => v.isDead).length, [filtered]);
   const avgMargin = useMemo(() => {
     const withCost = filtered.filter((v) => v.margin !== null);
@@ -407,7 +405,7 @@ export default function Inventario() {
         </Card>
 
         {/* ── KPI DINAMICI ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
           {[
             { label: `Pezzi in stock${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
             { label: `Valore magazzino (costo)${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredTotalValue) },
@@ -416,11 +414,6 @@ export default function Inventario() {
               label: "Margine medio (su filtro)",
               value: avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—",
               color: avgMargin !== null ? (avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060") : undefined,
-            },
-            {
-              label: `Esauriti / Bassi (≤${thr})`,
-              value: `${filteredOutOfStock} / ${filteredLowStock}`,
-              color: filteredOutOfStock > 0 ? "#d82c0d" : filteredLowStock > 0 ? "#b98900" : undefined,
             },
             {
               label: "Stock fermi (0 vendite 30gg)",
