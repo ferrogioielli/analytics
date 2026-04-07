@@ -30,6 +30,7 @@ export const loader = async ({ request }) => {
         productTitle: p.title,
         vendor: p.vendor || "",
         productType: p.productType || "",
+        status: p.status || "ACTIVE",
         imageUrl: p.featuredImage?.url || null,
         variantId: v.id,
         variantTitle: v.title,
@@ -89,7 +90,8 @@ export default function Inventario() {
   const [search, setSearch] = useState("");
   const [filterVendor, setFilterVendor] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [filterStock, setFilterStock] = useState("");
+  const [filterScorte, setFilterScorte] = useState("");  // scorte fisiche
+  const [filterStatus, setFilterStatus] = useState("");  // stato pubblicazione
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -103,11 +105,14 @@ export default function Inventario() {
     }
     if (filterVendor && v.vendor !== filterVendor) return false;
     if (filterType && v.productType !== filterType) return false;
-    if (filterStock === "out" && v.qty > 0) return false;
-    if (filterStock === "low" && (v.qty <= 0 || v.qty > thr)) return false;
-    if (filterStock === "ok" && v.qty <= thr) return false;
+    // Scorte fisiche (come Shopify: a magazzino / basso / esaurito)
+    if (filterScorte === "in_stock" && v.qty <= 0) return false;
+    if (filterScorte === "low" && (v.qty <= 0 || v.qty > thr)) return false;
+    if (filterScorte === "out" && v.qty > 0) return false;
+    // Stato pubblicazione (come Shopify: disponibile / bozza / non in elenco)
+    if (filterStatus && v.status !== filterStatus) return false;
     return true;
-  }), [variants, search, filterVendor, filterType, filterStock, thr]);
+  }), [variants, search, filterVendor, filterType, filterScorte, filterStatus, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -203,11 +208,17 @@ export default function Inventario() {
 
   const vendorOptions = [{ label: "Tutti i brand", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))];
   const typeOptions = [{ label: "Tutti i tipi", value: "" }, ...types.map((t) => ({ label: t, value: t }))];
-  const stockOptions = [
-    { label: "Tutto lo stock", value: "" },
-    { label: `Disponibile (>${thr})`, value: "ok" },
-    { label: `Basso (1-${thr})`, value: "low" },
-    { label: "Esaurito (0)", value: "out" },
+  const scorteOptions = [
+    { label: "Tutte le scorte", value: "" },
+    { label: "A magazzino (disponibile)", value: "in_stock" },
+    { label: `Scorte basse (1–${thr} pz)`, value: "low" },
+    { label: "Esaurito (0 pz)", value: "out" },
+  ];
+  const statusOptions = [
+    { label: "Tutti gli stati", value: "" },
+    { label: "Disponibile", value: "ACTIVE" },
+    { label: "Bozza", value: "DRAFT" },
+    { label: "Non in elenco", value: "ARCHIVED" },
   ];
 
   const isFiltered = filtered.length < variants.length;
@@ -235,7 +246,8 @@ export default function Inventario() {
               <Text as="h2" variant="headingMd">Filtri</Text>
               {isFiltered && (
                 <Button size="slim" plain onClick={() => {
-                  setSearch(""); setFilterVendor(""); setFilterType(""); setFilterStock("");
+                  setSearch(""); setFilterVendor(""); setFilterType("");
+                  setFilterScorte(""); setFilterStatus("");
                 }}>
                   Azzera filtri
                 </Button>
@@ -252,15 +264,19 @@ export default function Inventario() {
                 <Select label="Brand" options={vendorOptions} value={filterVendor} onChange={setFilterVendor} />
               </div>
               <div style={{ minWidth: 180 }}>
-                <Select label="Tipo" options={typeOptions} value={filterType} onChange={setFilterType} />
+                <Select label="Tipo prodotto" options={typeOptions} value={filterType} onChange={setFilterType} />
+              </div>
+              <div style={{ minWidth: 200 }}>
+                <Select label="Scorte" options={scorteOptions} value={filterScorte} onChange={setFilterScorte} />
               </div>
               <div style={{ minWidth: 180 }}>
-                <Select label="Disponibilità" options={stockOptions} value={filterStock} onChange={setFilterStock} />
+                <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
               </div>
               <div style={{ minWidth: 120 }}>
                 <TextField
-                  label="Soglia stock basso" type="number" value={threshold}
+                  label="Soglia scorte basse" type="number" value={threshold}
                   onChange={setThreshold} autoComplete="off" min={1}
+                  helpText={`≤ ${thr} pz = basso`}
                 />
               </div>
             </InlineStack>
