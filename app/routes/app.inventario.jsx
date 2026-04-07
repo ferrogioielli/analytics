@@ -93,7 +93,9 @@ export default function Inventario() {
   const [filterType, setFilterType] = useState("");
   const [filterScorte, setFilterScorte] = useState("");  // scorte fisiche
   const [filterStatus, setFilterStatus] = useState("");  // stato pubblicazione
-  const [filterTag, setFilterTag] = useState("");         // tag prodotto
+  const [filterTag, setFilterTag] = useState("");         // tag prodotto (includi)
+  const [excludeVendor, setExcludeVendor] = useState(""); // brand da escludere
+  const [excludeTag, setExcludeTag] = useState("");       // tag da escludere
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -115,10 +117,13 @@ export default function Inventario() {
     if (filterScorte === "out" && v.qty > 0) return false;
     // Stato pubblicazione (come Shopify: disponibile / bozza / non in elenco)
     if (filterStatus && v.status !== filterStatus) return false;
-    // Tag prodotto
+    // Tag prodotto (includi)
     if (filterTag && !v.tags.includes(filterTag)) return false;
+    // Esclusioni
+    if (excludeVendor && v.vendor === excludeVendor) return false;
+    if (excludeTag && v.tags.includes(excludeTag)) return false;
     return true;
-  }), [variants, search, filterVendor, filterType, filterScorte, filterStatus, filterTag, thr]);
+  }), [variants, search, filterVendor, filterType, filterScorte, filterStatus, filterTag, excludeVendor, excludeTag, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -256,6 +261,7 @@ export default function Inventario() {
                 <Button size="slim" plain onClick={() => {
                   setSearch(""); setFilterVendor(""); setFilterType("");
                   setFilterScorte(""); setFilterStatus(""); setFilterTag("");
+                  setExcludeVendor(""); setExcludeTag("");
                 }}>
                   Azzera filtri
                 </Button>
@@ -288,6 +294,24 @@ export default function Inventario() {
                   label="Soglia scorte basse" type="number" value={threshold}
                   onChange={setThreshold} autoComplete="off" min={1}
                   helpText={`≤ ${thr} pz = basso`}
+                />
+              </div>
+            </InlineStack>
+            <InlineStack gap="200" wrap>
+              <div style={{ minWidth: 180 }}>
+                <Select
+                  label="Escludi brand"
+                  options={[{ label: "Nessuna esclusione", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))]}
+                  value={excludeVendor}
+                  onChange={setExcludeVendor}
+                />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select
+                  label="Escludi tag"
+                  options={[{ label: "Nessuna esclusione", value: "" }, ...allTags.map((t) => ({ label: t, value: t }))]}
+                  value={excludeTag}
+                  onChange={setExcludeTag}
                 />
               </div>
             </InlineStack>
