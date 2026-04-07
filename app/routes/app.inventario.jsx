@@ -2,7 +2,7 @@ import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useMemo } from "react";
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge,
   DataTable, Select, Thumbnail, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -75,8 +75,13 @@ function StockBadge({ qty, threshold }) {
   return <Badge tone="success">{qty}</Badge>;
 }
 
-// Colonne: Prodotto, Variante, SKU, Brand, Tipo, Prezzo, Costo, Margine%, Stock, Val.mag, Val.vend
-const SORT_KEYS = [null, null, null, "vendor", "productType", "price", "cost", "margin", "qty", "stockValue", "salesValue"];
+function MarginCell({ margin }) {
+  if (margin === null) return <span style={{ color: "#999" }}>—</span>;
+  const color = margin < 20 ? "#d82c0d" : margin < 40 ? "#b98900" : "#008060";
+  return <span style={{ color, fontWeight: 500 }}>{margin.toFixed(1)}%</span>;
+}
+
+const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue"];
 
 export default function Inventario() {
   const { variants, vendors, types } = useLoaderData();
@@ -85,8 +90,6 @@ export default function Inventario() {
   const [filterVendor, setFilterVendor] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterStock, setFilterStock] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -103,10 +106,8 @@ export default function Inventario() {
     if (filterStock === "out" && v.qty > 0) return false;
     if (filterStock === "low" && (v.qty <= 0 || v.qty > thr)) return false;
     if (filterStock === "ok" && v.qty <= thr) return false;
-    if (minPrice !== "" && v.price < parseFloat(minPrice)) return false;
-    if (maxPrice !== "" && v.price > parseFloat(maxPrice)) return false;
     return true;
-  }), [variants, search, filterVendor, filterType, filterStock, minPrice, maxPrice, thr]);
+  }), [variants, search, filterVendor, filterType, filterStock, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -119,23 +120,43 @@ export default function Inventario() {
     });
   }, [filtered, sortCol, sortDir]);
 
+  // KPI dinamici sul filtro
   const filteredTotalValue = useMemo(() => filtered.reduce((s, v) => s + v.stockValue, 0), [filtered]);
   const filteredSalesValue = useMemo(() => filtered.reduce((s, v) => s + v.salesValue, 0), [filtered]);
+  const filteredTotalQty = useMemo(() => filtered.reduce((s, v) => s + v.qty, 0), [filtered]);
   const filteredOutOfStock = useMemo(() => filtered.filter((v) => v.qty <= 0).length, [filtered]);
   const filteredLowStock = useMemo(() => filtered.filter((v) => v.qty > 0 && v.qty <= thr).length, [filtered, thr]);
-
   const avgMargin = useMemo(() => {
     const withCost = filtered.filter((v) => v.margin !== null);
     if (!withCost.length) return null;
     return withCost.reduce((s, v) => s + v.margin, 0) / withCost.length;
   }, [filtered]);
 
+  // Riepilogo per brand (sul filtro attivo)
+  const brandSummary = useMemo(() => {
+    const map = new Map();
+    for (const v of filtered) {
+      const key = v.vendor || "—";
+      if (!map.has(key)) map.set(key, { brand: key, variants: 0, qty: 0, stockValue: 0, salesValue: 0, margins: [] });
+      const b = map.get(key);
+      b.variants++;
+      b.qty += v.qty;
+      b.stockValue += v.stockValue;
+      b.salesValue += v.salesValue;
+      if (v.margin !== null) b.margins.push(v.margin);
+    }
+    return Array.from(map.values())
+      .map((b) => ({ ...b, avgMargin: b.margins.length > 0 ? b.margins.reduce((s, m) => s + m, 0) / b.margins.length : null }))
+      .sort((a, b) => b.stockValue - a.stockValue);
+  }, [filtered]);
+
+  // Top 20 chart
   const topByValue = useMemo(() =>
     [...filtered]
       .sort((a, b) => b.stockValue - a.stockValue)
       .slice(0, 20)
       .map((v) => ({
-        title: `${v.productTitle}${v.variantTitle !== "Default Title" ? ` (${v.variantTitle})` : ""}`,
+        title: `${v.productTitle}${v.variantTitle !== "Default Title" ? ` · ${v.variantTitle}` : ""}`,
         value: v.stockValue,
       }))
   , [filtered]);
@@ -149,13 +170,9 @@ export default function Inventario() {
     v.sku || "—",
     v.vendor || "—",
     v.productType || "—",
-    formatCurrency(v.price),
     v.cost > 0 ? formatCurrency(v.cost) : "—",
-    v.margin !== null ? (
-      <span style={{ color: v.margin < 20 ? "#d82c0d" : v.margin < 40 ? "#b98900" : "#008060", fontWeight: 500 }}>
-        {v.margin.toFixed(1)}%
-      </span>
-    ) : "—",
+    formatCurrency(v.price),
+    <MarginCell key={v.variantId + "m"} margin={v.margin} />,
     <StockBadge key={v.variantId + "s"} qty={v.qty} threshold={thr} />,
     v.cost > 0 ? formatCurrency(v.stockValue) : "—",
     formatCurrency(v.salesValue),
@@ -167,12 +184,21 @@ export default function Inventario() {
     SKU: v.sku,
     Brand: v.vendor,
     Tipo: v.productType,
-    "Prezzo vendita": v.price.toFixed(2),
     "Costo unitario": v.cost > 0 ? v.cost.toFixed(2) : "",
+    "Prezzo vendita": v.price.toFixed(2),
     "Margine %": v.margin !== null ? v.margin.toFixed(1) : "",
     Quantità: v.qty,
-    "Valore magazzino": v.cost > 0 ? v.stockValue.toFixed(2) : "",
+    "Valore magazzino (costo)": v.cost > 0 ? v.stockValue.toFixed(2) : "",
     "Valore a prezzo vendita": v.salesValue.toFixed(2),
+  }));
+
+  const brandExportRows = brandSummary.map((b) => ({
+    Brand: b.brand,
+    "N. varianti": b.variants,
+    "Pezzi totali": b.qty,
+    "Valore costo": b.stockValue.toFixed(2),
+    "Valore vendita": b.salesValue.toFixed(2),
+    "Margine medio %": b.avgMargin !== null ? b.avgMargin.toFixed(1) : "",
   }));
 
   const vendorOptions = [{ label: "Tutti i brand", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))];
@@ -191,74 +217,135 @@ export default function Inventario() {
       <TitleBar title="Inventario" />
       <BlockStack gap="500">
 
-        {/* Header */}
+        {/* ── HEADER ── */}
         <InlineStack align="space-between" blockAlign="center" wrap>
           <Text as="h1" variant="headingLg">Inventario magazzino</Text>
           <InlineStack gap="200">
-            <Button size="slim" onClick={() => exportCSV(exportRows, "inventario.csv")}>CSV</Button>
-            <Button size="slim" onClick={() => exportExcel(exportRows, "inventario.xlsx")}>Excel</Button>
+            <Button size="slim" onClick={() => exportCSV(exportRows, "inventario.csv")}>CSV varianti</Button>
+            <Button size="slim" onClick={() => exportExcel(exportRows, "inventario.xlsx")}>Excel varianti</Button>
+            <Button size="slim" onClick={() => exportCSV(brandExportRows, "inventario_per_brand.csv")}>CSV per brand</Button>
             <Button size="slim" onClick={() => window.print()}>Stampa / PDF</Button>
           </InlineStack>
         </InlineStack>
 
-        {/* KPI — dinamici sul filtro attivo */}
-        <Layout>
-          <Layout.Section variant="oneQuarter">
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Valore magazzino (costo){isFiltered ? " — filtrato" : ""}</Text>
-                <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(filteredTotalValue)}</Text>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Valore a prezzo vendita{isFiltered ? " — filtrato" : ""}</Text>
-                <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(filteredSalesValue)}</Text>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Margine medio (su filtro)</Text>
-                <Text as="p" variant="headingLg" fontWeight="bold">
-                  {avgMargin !== null ? (
-                    <span style={{ color: avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060" }}>
-                      {avgMargin.toFixed(1)}%
-                    </span>
-                  ) : "—"}
-                </Text>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Esauriti / Bassi (≤{thr})</Text>
-                <Text as="p" variant="headingLg" fontWeight="bold">
-                  <span style={{ color: filteredOutOfStock > 0 ? "#d82c0d" : "inherit" }}>{filteredOutOfStock}</span>
-                  {" / "}
-                  <span style={{ color: filteredLowStock > 0 ? "#b98900" : "inherit" }}>{filteredLowStock}</span>
-                </Text>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* Grafico top 20 per valore (filtrato) */}
+        {/* ── FILTRI (sopra i KPI) ── */}
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Top 20 varianti per valore magazzino{isFiltered ? " (filtrato)" : ""}</Text>
-            {topByValue.length === 0 ? (
-              <Text as="p" tone="subdued">Nessun dato disponibile (aggiungi il costo unitario ai prodotti).</Text>
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Filtri</Text>
+              {isFiltered && (
+                <Button size="slim" plain onClick={() => {
+                  setSearch(""); setFilterVendor(""); setFilterType(""); setFilterStock("");
+                }}>
+                  Azzera filtri
+                </Button>
+              )}
+            </InlineStack>
+            <InlineStack gap="200" wrap>
+              <div style={{ minWidth: 220 }}>
+                <TextField
+                  label="Cerca" placeholder="Prodotto / SKU..."
+                  value={search} onChange={setSearch} autoComplete="off"
+                />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select label="Brand" options={vendorOptions} value={filterVendor} onChange={setFilterVendor} />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select label="Tipo" options={typeOptions} value={filterType} onChange={setFilterType} />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select label="Disponibilità" options={stockOptions} value={filterStock} onChange={setFilterStock} />
+              </div>
+              <div style={{ minWidth: 120 }}>
+                <TextField
+                  label="Soglia stock basso" type="number" value={threshold}
+                  onChange={setThreshold} autoComplete="off" min={1}
+                />
+              </div>
+            </InlineStack>
+            {isFiltered && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {filtered.length} varianti su {variants.length} totali
+              </Text>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* ── KPI DINAMICI ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+          {[
+            { label: `Pezzi in stock${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
+            { label: `Valore magazzino (costo)${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredTotalValue) },
+            { label: `Valore a prezzo vendita${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredSalesValue) },
+            {
+              label: "Margine medio (su filtro)",
+              value: avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—",
+              color: avgMargin !== null ? (avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060") : undefined,
+            },
+            {
+              label: `Esauriti / Bassi (≤${thr})`,
+              value: `${filteredOutOfStock} / ${filteredLowStock}`,
+              color: filteredOutOfStock > 0 ? "#d82c0d" : filteredLowStock > 0 ? "#b98900" : undefined,
+            },
+          ].map(({ label, value, color }) => (
+            <Card key={label}>
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+                <Text as="p" variant="headingLg" fontWeight="bold">
+                  <span style={color ? { color } : {}}>{value}</span>
+                </Text>
+              </BlockStack>
+            </Card>
+          ))}
+        </div>
+
+        {/* ── RIEPILOGO PER BRAND ── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                Riepilogo per brand{isFiltered ? " — filtrato" : ""}
+              </Text>
+              <Button size="slim" plain onClick={() => exportCSV(brandExportRows, "inventario_per_brand.csv")}>
+                Esporta CSV
+              </Button>
+            </InlineStack>
+            {brandSummary.length === 0 ? (
+              <Text as="p" tone="subdued">Nessun dato.</Text>
             ) : (
-              <ResponsiveContainer width="100%" height={300}>
+              <DataTable
+                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
+                headings={["Brand", "Varianti", "Pezzi totali", "Valore costo", "Valore vendita", "Margine medio"]}
+                rows={brandSummary.map((b) => [
+                  <Button key={b.brand} size="slim" plain onClick={() => setFilterVendor(b.brand === "—" ? "" : b.brand)}>
+                    {b.brand}
+                  </Button>,
+                  b.variants.toString(),
+                  b.qty.toLocaleString("it-IT"),
+                  b.stockValue > 0 ? formatCurrency(b.stockValue) : "—",
+                  formatCurrency(b.salesValue),
+                  b.avgMargin !== null ? (
+                    <MarginCell key={b.brand + "m"} margin={b.avgMargin} />
+                  ) : "—",
+                ])}
+              />
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* ── GRAFICO TOP 20 ── */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Top 20 varianti per valore magazzino{isFiltered ? " — filtrato" : ""}</Text>
+            {topByValue.length === 0 ? (
+              <Text as="p" tone="subdued">Nessun dato (aggiungi il costo unitario ai prodotti in Shopify).</Text>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
                 <BarChart data={topByValue} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                   <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `€${v.toFixed(0)}`} />
-                  <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={200} />
+                  <YAxis type="category" dataKey="title" tick={{ fontSize: 9 }} width={220} />
                   <Tooltip formatter={(v) => formatCurrency(v)} />
                   <Bar dataKey="value" name="Valore mag." fill="#9B59B6" radius={[0, 3, 3, 0]} />
                 </BarChart>
@@ -267,71 +354,20 @@ export default function Inventario() {
           </BlockStack>
         </Card>
 
-        {/* Filtri + Tabella */}
+        {/* ── TABELLA VARIANTI ── */}
         <Card>
           <BlockStack gap="400">
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center" wrap>
-                <Text as="h2" variant="headingMd">
-                  Varianti ({filtered.length}{filtered.length > 500 ? " — mostrando 500" : ""}{isFiltered ? ` su ${variants.length}` : ""})
-                </Text>
-                <Button size="slim" plain onClick={() => {
-                  setSearch(""); setFilterVendor(""); setFilterType("");
-                  setFilterStock(""); setMinPrice(""); setMaxPrice("");
-                }}>
-                  Azzera filtri
-                </Button>
-              </InlineStack>
-
-              {/* Filtri riga 1 */}
-              <InlineStack gap="200" wrap>
-                <div style={{ minWidth: 220 }}>
-                  <TextField
-                    label="" labelHidden placeholder="Cerca prodotto / SKU..."
-                    value={search} onChange={setSearch} autoComplete="off"
-                  />
-                </div>
-                <div style={{ minWidth: 170 }}>
-                  <Select label="" labelHidden options={vendorOptions} value={filterVendor} onChange={setFilterVendor} />
-                </div>
-                <div style={{ minWidth: 170 }}>
-                  <Select label="" labelHidden options={typeOptions} value={filterType} onChange={setFilterType} />
-                </div>
-                <div style={{ minWidth: 160 }}>
-                  <Select label="" labelHidden options={stockOptions} value={filterStock} onChange={setFilterStock} />
-                </div>
-              </InlineStack>
-
-              {/* Filtri riga 2 */}
-              <InlineStack gap="200" wrap blockAlign="end">
-                <div style={{ minWidth: 130 }}>
-                  <TextField
-                    label="Prezzo min (€)" type="number" value={minPrice}
-                    onChange={setMinPrice} autoComplete="off" min={0}
-                  />
-                </div>
-                <div style={{ minWidth: 130 }}>
-                  <TextField
-                    label="Prezzo max (€)" type="number" value={maxPrice}
-                    onChange={setMaxPrice} autoComplete="off" min={0}
-                  />
-                </div>
-                <div style={{ minWidth: 130 }}>
-                  <TextField
-                    label="Soglia stock basso" type="number" value={threshold}
-                    onChange={setThreshold} autoComplete="off" min={1}
-                    helpText="Soglia per avviso"
-                  />
-                </div>
-              </InlineStack>
-            </BlockStack>
-
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                Varianti ({filtered.length}{filtered.length > 500 ? " — mostrando 500" : ""}{isFiltered ? ` su ${variants.length}` : ""})
+              </Text>
+            </InlineStack>
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessuna variante trovata con i filtri selezionati.</Text>
             ) : (
               <DataTable
                 columnContentTypes={["text","text","text","text","text","numeric","numeric","numeric","text","numeric","numeric"]}
-                headings={["Prodotto","Variante","SKU","Brand","Tipo","Prezzo","Costo","Margine %","Stock","Valore mag.","Valore vend."]}
+                headings={["Prodotto","Variante","SKU","Brand","Tipo","Costo unitario","Prezzo vendita","Margine %","Stock","Val. magazzino","Val. vendita"]}
                 rows={tableRows}
                 sortable={[false, false, false, true, true, true, true, true, true, true, true]}
                 defaultSortDirection="descending"
@@ -341,6 +377,7 @@ export default function Inventario() {
             )}
           </BlockStack>
         </Card>
+
       </BlockStack>
     </Page>
   );
