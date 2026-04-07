@@ -1,8 +1,8 @@
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
-  Page, Card, BlockStack, InlineStack, Text, Button, Badge,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge, Link,
   DataTable, Select, Thumbnail, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -12,6 +12,7 @@ import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  const shop = admin.session.shop; // es. "mionegozio.myshopify.com"
 
   const products = await fetchProducts(admin);
 
@@ -29,7 +30,7 @@ export const loader = async ({ request }) => {
   const types = [...new Set(products.map((p) => p.productType).filter(Boolean))].sort();
   const allTags = [...new Set(products.flatMap((p) => p.tags || []))].sort();
 
-  return json({ products, byBrand, vendors, types, allTags });
+  return json({ products, byBrand, vendors, types, allTags, shop });
 };
 
 function exportCSV(rows, filename) {
@@ -87,7 +88,7 @@ const PAGE_SIZE = 50;
 const SORT_KEYS = [null, "vendor", "productType", "status", "variantCount", "totalQty", "avgPrice"];
 
 export default function Prodotti() {
-  const { products, byBrand, vendors, types, allTags } = useLoaderData();
+  const { products, byBrand, vendors, types, allTags, shop } = useLoaderData();
 
   const [filterVendors, setFilterVendors] = useState(() => vendors);
   const [filterTypes, setFilterTypes] = useState(() => types);
@@ -98,7 +99,6 @@ export default function Prodotti() {
   const [sortDir, setSortDir] = useState("ascending");
   const [page, setPage] = useState(0);
 
-  // Arricchisci prodotti con campi calcolati per ordinamento
   const enriched = useMemo(() => products.map((p) => ({
     ...p,
     variantCount: p.variants.edges.length,
@@ -146,27 +146,45 @@ export default function Prodotti() {
     setFilterStatus("");
   };
 
-  // KPI filtrati
   const filteredActive = filtered.filter((p) => p.status === "ACTIVE").length;
   const filteredInventory = filtered.reduce((s, p) => s + (p.totalInventory || 0), 0);
   const filteredVendors = [...new Set(filtered.map((p) => p.vendor).filter(Boolean))].length;
 
-  const tableRows = pageData.map((p) => [
-    <InlineStack key={p.id} gap="200" blockAlign="center">
-      {p.featuredImage?.url && <Thumbnail source={p.featuredImage.url} size="small" alt={p.title} />}
-      <Text as="span" variant="bodySm">{p.title}</Text>
-    </InlineStack>,
-    p.vendor || "—",
-    p.productType || "—",
-    <Badge key={p.id + "s"} tone={p.status === "ACTIVE" ? "success" : p.status === "DRAFT" ? "attention" : "critical"}>
-      {p.status === "ACTIVE" ? "Attivo" : p.status === "DRAFT" ? "Bozza" : "Archiviato"}
-    </Badge>,
-    p.variantCount.toString(),
-    <span key={p.id + "qty"} style={{ color: p.totalQty <= 0 ? "#d82c0d" : p.totalQty <= 5 ? "#b98900" : "#008060", fontWeight: 500 }}>
-      {p.totalQty}
-    </span>,
-    formatCurrency(p.avgPrice),
-  ]);
+  const shopName = shop.replace(".myshopify.com", "");
+
+  const tableRows = pageData.map((p) => {
+    const numericId = p.id.split("/").pop();
+    const productUrl = `https://admin.shopify.com/store/${shopName}/products/${numericId}`;
+    return [
+      // Immagine separata dal nome
+      <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ flexShrink: 0 }}>
+          {p.featuredImage?.url
+            ? <Thumbnail source={p.featuredImage.url} size="small" alt={p.title} />
+            : <div style={{ width: 40, height: 40, background: "#f0f0f0", borderRadius: 4 }} />
+          }
+        </div>
+        <Link url={productUrl} external removeUnderline>
+          <span
+            style={{ display: "block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, cursor: "pointer" }}
+            title={p.title}
+          >
+            {p.title}
+          </span>
+        </Link>
+      </div>,
+      p.vendor || "—",
+      p.productType || "—",
+      <Badge key={p.id + "s"} tone={p.status === "ACTIVE" ? "success" : p.status === "DRAFT" ? "attention" : "critical"}>
+        {p.status === "ACTIVE" ? "Attivo" : p.status === "DRAFT" ? "Bozza" : "Archiviato"}
+      </Badge>,
+      p.variantCount.toString(),
+      <span key={p.id + "qty"} style={{ color: p.totalQty <= 0 ? "#d82c0d" : p.totalQty <= 5 ? "#b98900" : "#008060", fontWeight: 500 }}>
+        {p.totalQty}
+      </span>,
+      formatCurrency(p.avgPrice),
+    ];
+  });
 
   const exportRows = sorted.map((p) => ({
     Prodotto: p.title,
@@ -201,6 +219,54 @@ export default function Prodotti() {
             <Button size="slim" onClick={() => exportExcel(exportRows, "prodotti.xlsx")}>Excel</Button>
           </InlineStack>
         </InlineStack>
+
+        {/* ── KPI ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          {[
+            { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
+            { label: isFiltered ? "Attivi — filtrati" : "Prodotti attivi", value: filteredActive },
+            { label: isFiltered ? "Stock — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
+            { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
+          ].map(({ label, value }) => (
+            <Card key={label}>
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+                <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
+              </BlockStack>
+            </Card>
+          ))}
+        </div>
+
+        {/* ── DISTRIBUZIONE BRAND ── */}
+        {byBrand.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px", alignItems: "start" }}>
+                {/* Colonna sinistra: 1–35 */}
+                <div>
+                  {byBrand.slice(0, 35).map((b, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
+                      <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 1}.</span>
+                      <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                      <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
+                    </div>
+                  ))}
+                </div>
+                {/* Colonna destra: 36+ */}
+                <div>
+                  {byBrand.slice(35).map((b, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
+                      <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 36}.</span>
+                      <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                      <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </BlockStack>
+          </Card>
+        )}
 
         {/* ── FILTRI ── */}
         <Card>
@@ -270,43 +336,6 @@ export default function Prodotti() {
             )}
           </BlockStack>
         </Card>
-
-        {/* ── KPI ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          {[
-            { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
-            { label: isFiltered ? "Attivi — filtrati" : "Prodotti attivi", value: filteredActive },
-            { label: isFiltered ? "Stock totale — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
-            { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
-          ].map(({ label, value }) => (
-            <Card key={label}>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-                <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
-              </BlockStack>
-            </Card>
-          ))}
-        </div>
-
-        {/* ── DISTRIBUZIONE BRAND ── */}
-        {byBrand.length > 0 && (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 32px" }}>
-                {byBrand.map((b, i) => (
-                  <InlineStack key={i} align="space-between" blockAlign="center">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Text as="span" variant="bodySm" tone="subdued">{i + 1}.</Text>
-                      <Text as="span" variant="bodySm">{b.name}</Text>
-                    </InlineStack>
-                    <Text as="span" variant="bodySm" tone="subdued">{b.value} prodotti</Text>
-                  </InlineStack>
-                ))}
-              </div>
-            </BlockStack>
-          </Card>
-        )}
 
         {/* ── TABELLA PRODOTTI ── */}
         <Card>
