@@ -105,6 +105,7 @@ export default function Clienti() {
 
   const [search, setSearch] = useState("");
   const [minOrders, setMinOrders] = useState("");
+  const [filterSegment, setFilterSegment] = useState("");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
   const [top10Period, setTop10Period] = useState("tutto"); // oggi | settimana | mese | tutto
@@ -169,12 +170,13 @@ export default function Clienti() {
   , [rfmSegments]);
 
   // ── Tabella clienti filtrata ──
-  const filtered = useMemo(() => customers.filter((c) => {
+  const filtered = useMemo(() => rfmSegments.filter((c) => {
     const fullName = `${c.firstName || ""} ${c.lastName || ""} ${c.email || ""}`.toLowerCase();
     if (search && !fullName.includes(search.toLowerCase())) return false;
     if (minOrders && parseInt(c.numberOfOrders) < parseInt(minOrders)) return false;
+    if (filterSegment && c.segment !== filterSegment) return false;
     return true;
-  }), [customers, search, minOrders]);
+  }), [rfmSegments, search, minOrders, filterSegment]);
 
   // Reset pagina quando cambia il filtro
   useEffect(() => { setPage(0); }, [filtered]);
@@ -182,13 +184,17 @@ export default function Clienti() {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
+  const segColors = { Champions: "#008060", Abituali: "#1E90FF", Nuovi: "#2ECC71", Occasionali: "#FFB400", "A rischio": "#FF4D4D", Persi: "#888" };
+  const segTones = { Champions: "success", Abituali: "info", Nuovi: "success", Occasionali: "warning", "A rischio": "critical", Persi: "critical" };
+
   const tableRows = pageData.map((c) => [
     `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
     c.email || "—",
+    <Badge key={c.id + "seg"} tone={segTones[c.segment] || "info"}>{c.segment}</Badge>,
     c.numberOfOrders.toString(),
     formatCurrency(parseFloat(c.amountSpent?.amount || 0), c.amountSpent?.currencyCode),
     c.lastOrder ? formatDate(c.lastOrder.createdAt) : "—",
-    formatDate(c.createdAt),
+    c.daysSinceLast < 9999 ? `${c.daysSinceLast}gg fa` : "—",
   ]);
 
   const exportRows = filtered.map((c) => ({
@@ -252,110 +258,44 @@ export default function Clienti() {
           </Card>
         </div>
 
-        {/* ── TOP 10 + RFM ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-
-          {/* TOP 10 con filtro periodo */}
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center" wrap>
-                <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
-                <InlineStack gap="100">
-                  {periodLabels.map(({ key, label }) => (
-                    <Button key={key} size="slim"
-                      variant={top10Period === key ? "primary" : "plain"}
-                      onClick={() => setTop10Period(key)}>
-                      {label}
-                    </Button>
-                  ))}
-                </InlineStack>
+        {/* ── TOP 10 ── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center" wrap>
+              <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
+              <InlineStack gap="100">
+                {periodLabels.map(({ key, label }) => (
+                  <Button key={key} size="slim"
+                    variant={top10Period === key ? "primary" : "plain"}
+                    onClick={() => setTop10Period(key)}>
+                    {label}
+                  </Button>
+                ))}
               </InlineStack>
-
-              {top10.length === 0 ? (
-                <Text as="p" tone="subdued">Nessun ordine nel periodo selezionato.</Text>
-              ) : (
-                <BlockStack gap="0">
-                  {top10.map((c, i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: i < top10.length - 1 ? "1px solid #f0f0f0" : "none" }}>
-                      <InlineStack gap="200" blockAlign="center">
-                        <span style={{ fontSize: 13, color: "#6d7175", minWidth: 20, fontWeight: 600 }}>{i + 1}.</span>
-                        <BlockStack gap="0">
-                          <Text as="span" variant="bodySm" fontWeight="semibold">{c.name}</Text>
-                          <Text as="span" variant="bodySm" tone="subdued">{c.email}</Text>
-                        </BlockStack>
-                      </InlineStack>
+            </InlineStack>
+            {top10.length === 0 ? (
+              <Text as="p" tone="subdued">Nessun ordine nel periodo selezionato.</Text>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px" }}>
+                {top10.map((c, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid #f4f4f4" }}>
+                    <InlineStack gap="200" blockAlign="center">
+                      <span style={{ fontSize: 13, color: "#6d7175", minWidth: 20, fontWeight: 600 }}>{i + 1}.</span>
                       <BlockStack gap="0">
-                        <Text as="span" variant="bodySm" fontWeight="semibold" alignment="end">{formatCurrency(c.spend, currency)}</Text>
-                        <Text as="span" variant="bodySm" tone="subdued" alignment="end">{c.orders} {c.orders === 1 ? "ordine" : "ordini"}</Text>
+                        <Text as="span" variant="bodySm" fontWeight="semibold">{c.name}</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">{c.email}</Text>
                       </BlockStack>
-                    </div>
-                  ))}
-                </BlockStack>
-              )}
-            </BlockStack>
-          </Card>
-
-          {/* SEGMENTAZIONE clienti */}
-          <Card>
-            <BlockStack gap="300">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">Segmentazione clienti</Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Basata su recenza, frequenza e spesa (metodo RFM). Ogni cliente riceve un'etichetta automatica.
-                </Text>
-              </BlockStack>
-
-              <BlockStack gap="0">
-                {RFM_SEGMENTS.map(({ key, color, tone, label, desc }) => {
-                  const count = segmentCounts[key] || 0;
-                  if (count === 0) return null;
-                  return (
-                    <div key={key} style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>
-                      <InlineStack align="space-between" blockAlign="start">
-                        <InlineStack gap="200" blockAlign="center">
-                          <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0, marginTop: 3 }} />
-                          <BlockStack gap="0">
-                            <Text as="span" variant="bodySm" fontWeight="semibold">{label}</Text>
-                            <Text as="span" variant="bodySm" tone="subdued">{desc}</Text>
-                          </BlockStack>
-                        </InlineStack>
-                        <Badge tone={tone}>{count}</Badge>
-                      </InlineStack>
-                    </div>
-                  );
-                })}
-              </BlockStack>
-            </BlockStack>
-          </Card>
-        </div>
-
-        {/* ── CLIENTI A RISCHIO / PERSI ── */}
-        {atRisk.length > 0 && (
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">Clienti a rischio / persi</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Clienti che avevano già acquistato ma non si vedono da oltre 90 giorni — considera di ricontattarli.
-                  </Text>
-                </BlockStack>
-                <Badge tone="critical">{atRisk.length}</Badge>
-              </InlineStack>
-              <DataTable
-                columnContentTypes={["text","text","numeric","numeric","text"]}
-                headings={["Nome","Email","Ordini","Spesa totale","Ultimo ordine"]}
-                rows={atRisk.map((c) => [
-                  `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
-                  c.email || "—",
-                  c.numberOfOrders.toString(),
-                  formatCurrency(parseFloat(c.amountSpent?.amount || 0), c.amountSpent?.currencyCode),
-                  c.lastOrder ? `${formatDate(c.lastOrder.createdAt)} (${c.daysSinceLast}gg fa)` : "Mai",
-                ])}
-              />
-            </BlockStack>
-          </Card>
-        )}
+                    </InlineStack>
+                    <BlockStack gap="0">
+                      <Text as="span" variant="bodySm" fontWeight="semibold">{formatCurrency(c.spend, currency)}</Text>
+                      <Text as="span" variant="bodySm" tone="subdued">{c.orders} {c.orders === 1 ? "ordine" : "ordini"}</Text>
+                    </BlockStack>
+                  </div>
+                ))}
+              </div>
+            )}
+          </BlockStack>
+        </Card>
 
         {/* ── NUOVI CLIENTI PER MESE ── */}
         {newByMonth.length > 0 && (
@@ -378,19 +318,36 @@ export default function Clienti() {
         {/* ── TABELLA CLIENTI ── */}
         <Card>
           <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center" wrap>
-              <Text as="h2" variant="headingMd">
-                Tutti i clienti ({filtered.length})
-              </Text>
-              <InlineStack gap="200" wrap>
-                <div style={{ minWidth: 220 }}>
-                  <TextField label="" labelHidden placeholder="Cerca nome / email..." value={search} onChange={setSearch} autoComplete="off" />
-                </div>
-                <div style={{ minWidth: 130 }}>
-                  <TextField label="" labelHidden placeholder="Min. ordini..." type="number" value={minOrders} onChange={setMinOrders} autoComplete="off" />
-                </div>
-              </InlineStack>
+            <Text as="h2" variant="headingMd">Tutti i clienti ({filtered.length})</Text>
+
+            {/* Filtri per segmento */}
+            <InlineStack gap="150" wrap>
+              <Button size="slim" variant={filterSegment === "" ? "primary" : "plain"} onClick={() => setFilterSegment("")}>
+                Tutti ({customers.length})
+              </Button>
+              {RFM_SEGMENTS.map(({ key, label }) => {
+                const count = segmentCounts[key] || 0;
+                if (count === 0) return null;
+                return (
+                  <Button key={key} size="slim"
+                    variant={filterSegment === key ? "primary" : "plain"}
+                    onClick={() => setFilterSegment(filterSegment === key ? "" : key)}>
+                    {label} ({count})
+                  </Button>
+                );
+              })}
             </InlineStack>
+
+            {/* Cerca + min ordini */}
+            <InlineStack gap="200" wrap>
+              <div style={{ minWidth: 220 }}>
+                <TextField label="" labelHidden placeholder="Cerca nome / email..." value={search} onChange={setSearch} autoComplete="off" />
+              </div>
+              <div style={{ minWidth: 130 }}>
+                <TextField label="" labelHidden placeholder="Min. ordini..." type="number" value={minOrders} onChange={setMinOrders} autoComplete="off" />
+              </div>
+            </InlineStack>
+
             {totalPages > 1 && (
               <InlineStack align="space-between" blockAlign="center">
                 <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
@@ -400,15 +357,17 @@ export default function Clienti() {
                 <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
               </InlineStack>
             )}
+
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessun cliente trovato.</Text>
             ) : (
               <DataTable
-                columnContentTypes={["text","text","numeric","numeric","text","text"]}
-                headings={["Nome","Email","Ordini","Spesa totale","Ultimo ordine","Registrato il"]}
+                columnContentTypes={["text","text","text","numeric","numeric","text","text"]}
+                headings={["Nome","Email","Segmento","Ordini","Spesa totale","Ultimo ordine","Inattivo da"]}
                 rows={tableRows}
               />
             )}
+
             {totalPages > 1 && (
               <InlineStack align="center" gap="200" blockAlign="center">
                 <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
