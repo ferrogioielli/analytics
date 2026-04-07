@@ -1,9 +1,9 @@
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, Thumbnail, TextField,
+  DataTable, Select, Thumbnail, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -30,7 +30,7 @@ export const loader = async ({ request }) => {
   const topByRevenue = topProductsByRevenue(orders, 20);
   const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 20);
 
-  // Distribuzione per brand
+  // Distribuzione per brand (su tutti i prodotti)
   const brandMap = new Map();
   for (const p of products) {
     const v = p.vendor || "Senza brand";
@@ -41,11 +41,11 @@ export const loader = async ({ request }) => {
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
 
-  // Vendors list
   const vendors = [...new Set(products.map((p) => p.vendor).filter(Boolean))].sort();
   const types = [...new Set(products.map((p) => p.productType).filter(Boolean))].sort();
+  const allTags = [...new Set(products.flatMap((p) => p.tags || []))].sort();
 
-  return json({ products, topByRevenue, topByUnits, byBrand, vendors, types, start, end });
+  return json({ products, topByRevenue, topByUnits, byBrand, vendors, types, allTags, start, end });
 };
 
 function exportCSV(rows, filename) {
@@ -106,23 +106,73 @@ function DateRangePicker({ start, end }) {
   );
 }
 
+function MultiSelect({ label, allLabel, options, selected, onChange, allValues }) {
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((v) => !v), []);
+  const isAll = selected.length === allValues.length;
+  return (
+    <BlockStack gap="100">
+      <Text as="span" variant="bodySm">{label}</Text>
+      <Popover
+        active={open}
+        activator={
+          <Button size="slim" disclosure onClick={toggle} fullWidth textAlign="left">
+            {isAll ? allLabel : `${selected.length} / ${allValues.length} selezionati`}
+          </Button>
+        }
+        onClose={() => setOpen(false)}
+        preferredAlignment="left"
+      >
+        <div style={{ minWidth: 220 }}>
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid #e1e3e5" }}>
+            <Button size="slim" plain onClick={() => onChange(isAll ? [] : [...allValues])}>
+              {isAll ? "Deseleziona tutti" : "Seleziona tutti"}
+            </Button>
+          </div>
+          <div style={{ maxHeight: 260, overflowY: "auto" }}>
+            <OptionList options={options} selected={selected} onChange={onChange} allowMultiple />
+          </div>
+        </div>
+      </Popover>
+    </BlockStack>
+  );
+}
+
 export default function Prodotti() {
-  const { products, topByRevenue, topByUnits, byBrand, vendors, types, start, end } = useLoaderData();
-  const [filterVendor, setFilterVendor] = useState("");
-  const [filterType, setFilterType] = useState("");
+  const { products, topByRevenue, topByUnits, byBrand, vendors, types, allTags, start, end } = useLoaderData();
+
+  const [filterVendors, setFilterVendors] = useState(() => vendors);
+  const [filterTypes, setFilterTypes] = useState(() => types);
+  const [filterTags, setFilterTags] = useState(() => allTags);
   const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => products.filter((p) => {
     if (search && !p.title.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filterVendor && p.vendor !== filterVendor) return false;
-    if (filterType && p.productType !== filterType) return false;
+    if (filterVendors.length < vendors.length && !filterVendors.includes(p.vendor || "")) return false;
+    if (filterTypes.length < types.length && !filterTypes.includes(p.productType || "")) return false;
     if (filterStatus && p.status !== filterStatus) return false;
+    if (filterTags.length < allTags.length) {
+      const excluded = allTags.filter((t) => !filterTags.includes(t));
+      if (excluded.some((t) => (p.tags || []).includes(t))) return false;
+    }
     return true;
-  }), [products, search, filterVendor, filterType, filterStatus]);
+  }), [products, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags]);
 
-  const totalInventory = products.reduce((s, p) => s + (p.totalInventory || 0), 0);
-  const activeProducts = products.filter((p) => p.status === "ACTIVE").length;
+  const isFiltered = filtered.length < products.length;
+
+  const resetFilters = () => {
+    setSearch("");
+    setFilterVendors(vendors);
+    setFilterTypes(types);
+    setFilterTags(allTags);
+    setFilterStatus("");
+  };
+
+  // KPI sul set filtrato
+  const filteredInventory = filtered.reduce((s, p) => s + (p.totalInventory || 0), 0);
+  const filteredActive = filtered.filter((p) => p.status === "ACTIVE").length;
+  const filteredVendors = [...new Set(filtered.map((p) => p.vendor).filter(Boolean))].length;
   const totalRevenue = topByRevenue.reduce((s, p) => s + p.revenue, 0);
 
   const tableRows = filtered.map((p) => {
@@ -159,16 +209,18 @@ export default function Prodotti() {
       Prodotto: p.title,
       Brand: p.vendor || "",
       Tipo: p.productType || "",
+      Tag: (p.tags || []).join(", "),
       Status: p.status,
       Varianti: p.variants.edges.length,
       "Stock totale": totalQty,
       "Unità vendute": soldData?.units || 0,
-      "Fatturato": soldData ? soldData.revenue.toFixed(2) : "0",
+      Fatturato: soldData ? soldData.revenue.toFixed(2) : "0",
     };
   });
 
-  const vendorOptions = [{ label: "Tutti i brand", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))];
-  const typeOptions = [{ label: "Tutti i tipi", value: "" }, ...types.map((t) => ({ label: t, value: t }))];
+  const vendorOptionList = vendors.map((v) => ({ label: v, value: v }));
+  const typeOptionList = types.map((t) => ({ label: t, value: t }));
+  const tagOptionList = allTags.map((t) => ({ label: t, value: t }));
   const statusOptions = [
     { label: "Tutti gli stati", value: "" },
     { label: "Attivo", value: "ACTIVE" },
@@ -180,6 +232,8 @@ export default function Prodotti() {
     <Page title="Prodotti">
       <TitleBar title="Prodotti" />
       <BlockStack gap="500">
+
+        {/* ── HEADER ── */}
         <InlineStack align="space-between" blockAlign="start" wrap>
           <DateRangePicker start={start} end={end} />
           <InlineStack gap="200">
@@ -188,48 +242,117 @@ export default function Prodotti() {
           </InlineStack>
         </InlineStack>
 
-        {/* KPI */}
+        {/* ── FILTRI ── */}
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Filtri</Text>
+              {isFiltered && (
+                <Button size="slim" plain onClick={resetFilters}>Azzera filtri</Button>
+              )}
+            </InlineStack>
+
+            <InlineStack gap="300" wrap blockAlign="start">
+              <div style={{ minWidth: 220 }}>
+                <TextField
+                  label="Cerca" placeholder="Nome prodotto..."
+                  value={search} onChange={setSearch} autoComplete="off"
+                />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
+              </div>
+            </InlineStack>
+
+            <InlineStack gap="300" wrap blockAlign="start">
+              {vendors.length > 0 && (
+                <div style={{ minWidth: 200 }}>
+                  <MultiSelect
+                    label="Brand"
+                    allLabel="Tutti i brand"
+                    options={vendorOptionList}
+                    selected={filterVendors}
+                    onChange={setFilterVendors}
+                    allValues={vendors}
+                  />
+                </div>
+              )}
+              {types.length > 0 && (
+                <div style={{ minWidth: 200 }}>
+                  <MultiSelect
+                    label="Tipo prodotto"
+                    allLabel="Tutti i tipi"
+                    options={typeOptionList}
+                    selected={filterTypes}
+                    onChange={setFilterTypes}
+                    allValues={types}
+                  />
+                </div>
+              )}
+              {allTags.length > 0 && (
+                <div style={{ minWidth: 200 }}>
+                  <MultiSelect
+                    label="Tag"
+                    allLabel="Tutti i tag"
+                    options={tagOptionList}
+                    selected={filterTags}
+                    onChange={setFilterTags}
+                    allValues={allTags}
+                  />
+                </div>
+              )}
+            </InlineStack>
+
+            {isFiltered && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {filtered.length} prodotti su {products.length} totali
+              </Text>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* ── KPI ── */}
         <Layout>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Prodotti totali</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{products.length}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Prodotti{isFiltered ? " — filtrati" : " totali"}</Text>
+              <Text as="p" variant="headingLg" fontWeight="bold">{filtered.length}</Text>
             </BlockStack></Card>
           </Layout.Section>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Prodotti attivi</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{activeProducts}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Prodotti attivi{isFiltered ? " — filtrati" : ""}</Text>
+              <Text as="p" variant="headingLg" fontWeight="bold">{filteredActive}</Text>
             </BlockStack></Card>
           </Layout.Section>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Stock totale</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{totalInventory.toLocaleString("it-IT")}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Stock totale{isFiltered ? " — filtrati" : ""}</Text>
+              <Text as="p" variant="headingLg" fontWeight="bold">{filteredInventory.toLocaleString("it-IT")}</Text>
             </BlockStack></Card>
           </Layout.Section>
           <Layout.Section variant="oneQuarter">
             <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Brand distinti</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{vendors.length}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Brand distinti{isFiltered ? " — filtrati" : ""}</Text>
+              <Text as="p" variant="headingLg" fontWeight="bold">{filteredVendors}</Text>
             </BlockStack></Card>
           </Layout.Section>
         </Layout>
 
-        {/* Grafici */}
+        {/* ── GRAFICI VENDITE ── */}
         <Layout>
           <Layout.Section variant="oneHalf">
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">Top 20 prodotti per fatturato</Text>
                 {topByRevenue.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessuna vendita nel periodo.</Text>
+                  <Text as="p" tone="subdued">Nessuna vendita nel periodo selezionato.</Text>
                 ) : (
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ResponsiveContainer width="100%" height={320}>
                     <BarChart data={topByRevenue.slice(0, 20)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                       <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `€${v.toFixed(0)}`} />
-                      <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={140} />
+                      <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={150} />
                       <Tooltip formatter={(v) => formatCurrency(v)} />
                       <Bar dataKey="revenue" name="Fatturato" fill="#FFB400" radius={[0, 3, 3, 0]} />
                     </BarChart>
@@ -244,13 +367,13 @@ export default function Prodotti() {
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">Top 20 per unità vendute</Text>
                 {topByUnits.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessuna vendita nel periodo.</Text>
+                  <Text as="p" tone="subdued">Nessuna vendita nel periodo selezionato.</Text>
                 ) : (
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ResponsiveContainer width="100%" height={320}>
                     <BarChart data={topByUnits.slice(0, 20)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                       <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
-                      <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={140} />
+                      <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={150} />
                       <Tooltip />
                       <Bar dataKey="units" name="Unità" fill="#008060" radius={[0, 3, 3, 0]} />
                     </BarChart>
@@ -261,66 +384,51 @@ export default function Prodotti() {
           </Layout.Section>
         </Layout>
 
-        {/* Distribuzione brand */}
-        <Layout>
-          <Layout.Section variant="oneThird">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie data={byBrand} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
-                      label={({ name, percent }) => percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ""}
-                      labelLine={false}>
-                      {byBrand.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-                {byBrand.slice(0, 5).map((b, i) => (
+        {/* ── DISTRIBUZIONE BRAND ── */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
+            <InlineStack gap="600" wrap blockAlign="start">
+              <ResponsiveContainer width={260} height={220}>
+                <PieChart>
+                  <Pie data={byBrand} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}
+                    label={({ name, percent }) => percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ""}
+                    labelLine={false}>
+                    {byBrand.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <BlockStack gap="200">
+                {byBrand.map((b, i) => (
                   <InlineStack key={i} gap="200" blockAlign="center">
                     <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS[i % COLORS.length], flexShrink: 0 }} />
-                    <Text as="span" variant="bodySm">{b.name}: {b.value}</Text>
+                    <Text as="span" variant="bodySm">{b.name}: {b.value} prodotti</Text>
                   </InlineStack>
                 ))}
               </BlockStack>
-            </Card>
-          </Layout.Section>
+            </InlineStack>
+          </BlockStack>
+        </Card>
 
-          {/* Tabella prodotti */}
-          <Layout.Section variant="twoThirds">
-            <Card>
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center" wrap>
-                  <Text as="h2" variant="headingMd">Tutti i prodotti ({filtered.length})</Text>
-                  <InlineStack gap="200" wrap>
-                    <div style={{ minWidth: 180 }}>
-                      <TextField label="" labelHidden placeholder="Cerca prodotto..." value={search} onChange={setSearch} autoComplete="off" />
-                    </div>
-                    <div style={{ minWidth: 150 }}>
-                      <Select label="" labelHidden options={vendorOptions} value={filterVendor} onChange={setFilterVendor} />
-                    </div>
-                    <div style={{ minWidth: 150 }}>
-                      <Select label="" labelHidden options={typeOptions} value={filterType} onChange={setFilterType} />
-                    </div>
-                    <div style={{ minWidth: 130 }}>
-                      <Select label="" labelHidden options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
-                    </div>
-                  </InlineStack>
-                </InlineStack>
-                {tableRows.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessun prodotto trovato.</Text>
-                ) : (
-                  <DataTable
-                    columnContentTypes={["text","text","text","text","numeric","numeric","numeric","numeric","numeric","numeric"]}
-                    headings={["Prodotto","Brand","Tipo","Status","Varianti","Stock","Prezzo medio","Venduto","Fatturato","% Fatt."]}
-                    rows={tableRows}
-                  />
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
+        {/* ── TABELLA PRODOTTI ── */}
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">
+              Tutti i prodotti ({filtered.length}{isFiltered ? ` su ${products.length}` : ""})
+            </Text>
+            {tableRows.length === 0 ? (
+              <Text as="p" tone="subdued">Nessun prodotto trovato con i filtri selezionati.</Text>
+            ) : (
+              <DataTable
+                columnContentTypes={["text","text","text","text","numeric","numeric","numeric","numeric","numeric","numeric"]}
+                headings={["Prodotto","Brand","Tipo","Status","Varianti","Stock","Prezzo medio","Venduto","Fatturato","% Fatt."]}
+                rows={tableRows}
+              />
+            )}
+          </BlockStack>
+        </Card>
+
       </BlockStack>
     </Page>
   );
