@@ -10,7 +10,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchOrders, groupOrdersByDay, calcKPI } from "../utils/shopify.server";
+import { fetchOrders, groupOrdersByDay, calcKPI, topProductsByRevenue } from "../utils/shopify.server";
 import { getPrevPeriod, formatCurrency, formatDate, formatStatus, daysAgo } from "../utils/format";
 
 export const loader = async ({ request }) => {
@@ -54,7 +54,11 @@ export const loader = async ({ request }) => {
   }
   const channels = Array.from(channelSet.entries()).map(([handle, name]) => ({ handle, name }));
 
-  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels });
+  // Top prodotti per fatturato e per unità
+  const topByRevenue = topProductsByRevenue(orders, 15);
+  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 15);
+
+  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits });
 };
 
 function DateRangePicker({ start, end }) {
@@ -152,7 +156,7 @@ function exportExcel(rows, filename) {
 }
 
 export default function Vendite() {
-  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels } = useLoaderData();
+  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits } = useLoaderData();
   const [filterStatus, setFilterStatus] = useState("");
   const [filterChannel, setFilterChannel] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -313,6 +317,48 @@ export default function Vendite() {
             )}
           </BlockStack>
         </Card>
+
+        {/* Top prodotti */}
+        {topByRevenue.length > 0 && (
+          <Layout>
+            <Layout.Section variant="oneHalf">
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Top prodotti per fatturato</Text>
+                  <BlockStack gap="100">
+                    {topByRevenue.map((p, i) => (
+                      <InlineStack key={p.id} align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="span" variant="bodySm" tone="subdued" fontWeight="semibold">{i + 1}.</Text>
+                          <Text as="span" variant="bodySm">{p.title}</Text>
+                        </InlineStack>
+                        <Text as="span" variant="bodySm" tone="subdued">{formatCurrency(p.revenue, currency)}</Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+            <Layout.Section variant="oneHalf">
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Top prodotti per unità vendute</Text>
+                  <BlockStack gap="100">
+                    {topByUnits.map((p, i) => (
+                      <InlineStack key={p.id} align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="span" variant="bodySm" tone="subdued" fontWeight="semibold">{i + 1}.</Text>
+                          <Text as="span" variant="bodySm">{p.title}</Text>
+                        </InlineStack>
+                        <Text as="span" variant="bodySm" tone="subdued">{p.units} pz</Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+          </Layout>
+        )}
 
         {/* Tabella ordini */}
         <Card>

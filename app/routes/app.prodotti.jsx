@@ -2,35 +2,20 @@ import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge,
   DataTable, Select, Thumbnail, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import {
-  BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchProducts, fetchOrders, topProductsByRevenue } from "../utils/shopify.server";
-import { formatCurrency, daysAgo } from "../utils/format";
-
-const COLORS = ["#008060","#1E90FF","#FFB400","#FF4D4D","#9B59B6","#2ECC71","#E67E22","#1ABC9C"];
+import { fetchProducts } from "../utils/shopify.server";
+import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const url = new URL(request.url);
-  const start = url.searchParams.get("start") || daysAgo(30);
-  const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
 
-  const [products, orders] = await Promise.all([
-    fetchProducts(admin),
-    fetchOrders(admin, { startDate: start, endDate: end }),
-  ]);
+  const products = await fetchProducts(admin);
 
-  const topByRevenue = topProductsByRevenue(orders, 20);
-  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 20);
-
-  // Distribuzione per brand (su tutti i prodotti)
+  // Distribuzione per brand
   const brandMap = new Map();
   for (const p of products) {
     const v = p.vendor || "Senza brand";
@@ -38,14 +23,13 @@ export const loader = async ({ request }) => {
   }
   const byBrand = Array.from(brandMap.entries())
     .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
+    .sort((a, b) => b.value - a.value);
 
   const vendors = [...new Set(products.map((p) => p.vendor).filter(Boolean))].sort();
   const types = [...new Set(products.map((p) => p.productType).filter(Boolean))].sort();
   const allTags = [...new Set(products.flatMap((p) => p.tags || []))].sort();
 
-  return json({ products, topByRevenue, topByUnits, byBrand, vendors, types, allTags, start, end });
+  return json({ products, byBrand, vendors, types, allTags });
 };
 
 function exportCSV(rows, filename) {
@@ -65,45 +49,6 @@ function exportExcel(rows, filename) {
     XLSX.utils.book_append_sheet(wb, ws, "Prodotti");
     XLSX.writeFile(wb, filename);
   });
-}
-
-function DateRangePicker({ start, end }) {
-  const navigate = useNavigate();
-  const today = new Date().toISOString().slice(0, 10);
-  const [cs, setCs] = useState(start);
-  const [ce, setCe] = useState(end);
-  useEffect(() => setCs(start), [start]);
-  useEffect(() => setCe(end), [end]);
-  const presets = [
-    { label: "30 giorni", start: daysAgo(30), end: today },
-    { label: "90 giorni", start: daysAgo(90), end: today },
-    { label: "Anno", start: `${new Date().getFullYear()}-01-01`, end: today },
-  ];
-  return (
-    <BlockStack gap="200">
-      <InlineStack gap="200" blockAlign="center" wrap>
-        <Text as="span" variant="bodySm" tone="subdued">Vendite nel periodo:</Text>
-        {presets.map((p) => (
-          <Button key={p.label} size="slim"
-            variant={start === p.start && end === p.end ? "primary" : "plain"}
-            onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
-            {p.label}
-          </Button>
-        ))}
-      </InlineStack>
-      <InlineStack gap="200" blockAlign="end" wrap>
-        <div style={{ minWidth: 150 }}>
-          <TextField label="Dal" type="date" value={cs} onChange={setCs} autoComplete="off" />
-        </div>
-        <div style={{ minWidth: 150 }}>
-          <TextField label="Al" type="date" value={ce} onChange={setCe} autoComplete="off" />
-        </div>
-        <div style={{ paddingTop: 22 }}>
-          <Button onClick={() => navigate(`?start=${cs}&end=${ce}`)}>Applica</Button>
-        </div>
-      </InlineStack>
-    </BlockStack>
-  );
 }
 
 function MultiSelect({ label, allLabel, options, selected, onChange, allValues }) {
@@ -138,16 +83,32 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
   );
 }
 
+const PAGE_SIZE = 50;
+const SORT_KEYS = [null, "vendor", "productType", "status", "variantCount", "totalQty", "avgPrice"];
+
 export default function Prodotti() {
-  const { products, topByRevenue, topByUnits, byBrand, vendors, types, allTags, start, end } = useLoaderData();
+  const { products, byBrand, vendors, types, allTags } = useLoaderData();
 
   const [filterVendors, setFilterVendors] = useState(() => vendors);
   const [filterTypes, setFilterTypes] = useState(() => types);
   const [filterTags, setFilterTags] = useState(() => allTags);
   const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState("");
+  const [sortCol, setSortCol] = useState(0);
+  const [sortDir, setSortDir] = useState("ascending");
+  const [page, setPage] = useState(0);
 
-  const filtered = useMemo(() => products.filter((p) => {
+  // Arricchisci prodotti con campi calcolati per ordinamento
+  const enriched = useMemo(() => products.map((p) => ({
+    ...p,
+    variantCount: p.variants.edges.length,
+    totalQty: p.variants.edges.reduce((s, e) => s + (e.node.inventoryQuantity || 0), 0),
+    avgPrice: p.variants.edges.length > 0
+      ? p.variants.edges.reduce((s, e) => s + parseFloat(e.node.price), 0) / p.variants.edges.length
+      : 0,
+  })), [products]);
+
+  const filtered = useMemo(() => enriched.filter((p) => {
     if (search && !p.title.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterVendors.length < vendors.length && !filterVendors.includes(p.vendor || "")) return false;
     if (filterTypes.length < types.length && !filterTypes.includes(p.productType || "")) return false;
@@ -157,7 +118,23 @@ export default function Prodotti() {
       if (excluded.some((t) => (p.tags || []).includes(t))) return false;
     }
     return true;
-  }), [products, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags]);
+  }), [enriched, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags]);
+
+  const sorted = useMemo(() => {
+    const key = SORT_KEYS[sortCol];
+    if (!key) return filtered;
+    return [...filtered].sort((a, b) => {
+      const av = a[key] ?? "";
+      const bv = b[key] ?? "";
+      const cmp = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+      return sortDir === "ascending" ? cmp : -cmp;
+    });
+  }, [filtered, sortCol, sortDir]);
+
+  useEffect(() => setPage(0), [filtered, sortCol, sortDir]);
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const pageData = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const isFiltered = filtered.length < products.length;
 
@@ -169,54 +146,38 @@ export default function Prodotti() {
     setFilterStatus("");
   };
 
-  // KPI sul set filtrato
-  const filteredInventory = filtered.reduce((s, p) => s + (p.totalInventory || 0), 0);
+  // KPI filtrati
   const filteredActive = filtered.filter((p) => p.status === "ACTIVE").length;
+  const filteredInventory = filtered.reduce((s, p) => s + (p.totalInventory || 0), 0);
   const filteredVendors = [...new Set(filtered.map((p) => p.vendor).filter(Boolean))].length;
-  const totalRevenue = topByRevenue.reduce((s, p) => s + p.revenue, 0);
 
-  const tableRows = filtered.map((p) => {
-    const totalQty = p.variants.edges.reduce((s, e) => s + (e.node.inventoryQuantity || 0), 0);
-    const avgPrice = p.variants.edges.length > 0
-      ? p.variants.edges.reduce((s, e) => s + parseFloat(e.node.price), 0) / p.variants.edges.length
-      : 0;
-    const soldData = topByRevenue.find((t) => t.id === p.id);
-    return [
-      <InlineStack key={p.id} gap="200" blockAlign="center">
-        {p.featuredImage?.url && <Thumbnail source={p.featuredImage.url} size="small" alt={p.title} />}
-        <Text as="span" variant="bodySm">{p.title}</Text>
-      </InlineStack>,
-      p.vendor || "—",
-      p.productType || "—",
-      <Badge key={p.id + "s"} tone={p.status === "ACTIVE" ? "success" : p.status === "DRAFT" ? "attention" : "critical"}>
-        {p.status === "ACTIVE" ? "Attivo" : p.status === "DRAFT" ? "Bozza" : "Archiviato"}
-      </Badge>,
-      p.variants.edges.length.toString(),
-      <span key={p.id + "qty"} style={{ color: totalQty <= 0 ? "#d82c0d" : totalQty <= 5 ? "#b98900" : "#008060", fontWeight: 500 }}>
-        {totalQty}
-      </span>,
-      formatCurrency(avgPrice),
-      soldData ? soldData.units.toString() : "0",
-      soldData ? formatCurrency(soldData.revenue) : "€0",
-      soldData && totalRevenue > 0 ? (soldData.revenue / totalRevenue * 100).toFixed(1) + "%" : "—",
-    ];
-  });
+  const tableRows = pageData.map((p) => [
+    <InlineStack key={p.id} gap="200" blockAlign="center">
+      {p.featuredImage?.url && <Thumbnail source={p.featuredImage.url} size="small" alt={p.title} />}
+      <Text as="span" variant="bodySm">{p.title}</Text>
+    </InlineStack>,
+    p.vendor || "—",
+    p.productType || "—",
+    <Badge key={p.id + "s"} tone={p.status === "ACTIVE" ? "success" : p.status === "DRAFT" ? "attention" : "critical"}>
+      {p.status === "ACTIVE" ? "Attivo" : p.status === "DRAFT" ? "Bozza" : "Archiviato"}
+    </Badge>,
+    p.variantCount.toString(),
+    <span key={p.id + "qty"} style={{ color: p.totalQty <= 0 ? "#d82c0d" : p.totalQty <= 5 ? "#b98900" : "#008060", fontWeight: 500 }}>
+      {p.totalQty}
+    </span>,
+    formatCurrency(p.avgPrice),
+  ]);
 
-  const exportRows = filtered.map((p) => {
-    const totalQty = p.variants.edges.reduce((s, e) => s + (e.node.inventoryQuantity || 0), 0);
-    const soldData = topByRevenue.find((t) => t.id === p.id);
-    return {
-      Prodotto: p.title,
-      Brand: p.vendor || "",
-      Tipo: p.productType || "",
-      Tag: (p.tags || []).join(", "),
-      Status: p.status,
-      Varianti: p.variants.edges.length,
-      "Stock totale": totalQty,
-      "Unità vendute": soldData?.units || 0,
-      Fatturato: soldData ? soldData.revenue.toFixed(2) : "0",
-    };
-  });
+  const exportRows = sorted.map((p) => ({
+    Prodotto: p.title,
+    Brand: p.vendor || "",
+    Tipo: p.productType || "",
+    Tag: (p.tags || []).join(", "),
+    Status: p.status,
+    Varianti: p.variantCount,
+    "Stock totale": p.totalQty,
+    "Prezzo medio": p.avgPrice.toFixed(2),
+  }));
 
   const vendorOptionList = vendors.map((v) => ({ label: v, value: v }));
   const typeOptionList = types.map((t) => ({ label: t, value: t }));
@@ -234,11 +195,10 @@ export default function Prodotti() {
       <BlockStack gap="500">
 
         {/* ── HEADER ── */}
-        <InlineStack align="space-between" blockAlign="start" wrap>
-          <DateRangePicker start={start} end={end} />
+        <InlineStack align="end" blockAlign="center">
           <InlineStack gap="200">
-            <Button size="slim" onClick={() => exportCSV(exportRows, `prodotti_${start}_${end}.csv`)}>CSV</Button>
-            <Button size="slim" onClick={() => exportExcel(exportRows, `prodotti_${start}_${end}.xlsx`)}>Excel</Button>
+            <Button size="slim" onClick={() => exportCSV(exportRows, "prodotti.csv")}>CSV</Button>
+            <Button size="slim" onClick={() => exportExcel(exportRows, "prodotti.xlsx")}>Excel</Button>
           </InlineStack>
         </InlineStack>
 
@@ -312,119 +272,80 @@ export default function Prodotti() {
         </Card>
 
         {/* ── KPI ── */}
-        <Layout>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Prodotti{isFiltered ? " — filtrati" : " totali"}</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{filtered.length}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Prodotti attivi{isFiltered ? " — filtrati" : ""}</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{filteredActive}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Stock totale{isFiltered ? " — filtrati" : ""}</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{filteredInventory.toLocaleString("it-IT")}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Brand distinti{isFiltered ? " — filtrati" : ""}</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{filteredVendors}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* ── GRAFICI VENDITE ── */}
-        <Layout>
-          <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top 20 prodotti per fatturato</Text>
-                {topByRevenue.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessuna vendita nel periodo selezionato.</Text>
-                ) : (
-                  <ResponsiveContainer width="100%" height={320}>
-                    <BarChart data={topByRevenue.slice(0, 20)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `€${v.toFixed(0)}`} />
-                      <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={150} />
-                      <Tooltip formatter={(v) => formatCurrency(v)} />
-                      <Bar dataKey="revenue" name="Fatturato" fill="#FFB400" radius={[0, 3, 3, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          {[
+            { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
+            { label: isFiltered ? "Attivi — filtrati" : "Prodotti attivi", value: filteredActive },
+            { label: isFiltered ? "Stock totale — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
+            { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
+          ].map(({ label, value }) => (
+            <Card key={label}>
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+                <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
               </BlockStack>
             </Card>
-          </Layout.Section>
-
-          <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top 20 per unità vendute</Text>
-                {topByUnits.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessuna vendita nel periodo selezionato.</Text>
-                ) : (
-                  <ResponsiveContainer width="100%" height={320}>
-                    <BarChart data={topByUnits.slice(0, 20)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
-                      <YAxis type="category" dataKey="title" tick={{ fontSize: 10 }} width={150} />
-                      <Tooltip />
-                      <Bar dataKey="units" name="Unità" fill="#008060" radius={[0, 3, 3, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
+          ))}
+        </div>
 
         {/* ── DISTRIBUZIONE BRAND ── */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
-            <InlineStack gap="600" wrap blockAlign="start">
-              <ResponsiveContainer width={260} height={220}>
-                <PieChart>
-                  <Pie data={byBrand} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}
-                    label={({ name, percent }) => percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ""}
-                    labelLine={false}>
-                    {byBrand.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-              <BlockStack gap="200">
+        {byBrand.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 32px" }}>
                 {byBrand.map((b, i) => (
-                  <InlineStack key={i} gap="200" blockAlign="center">
-                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS[i % COLORS.length], flexShrink: 0 }} />
-                    <Text as="span" variant="bodySm">{b.name}: {b.value} prodotti</Text>
+                  <InlineStack key={i} align="space-between" blockAlign="center">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Text as="span" variant="bodySm" tone="subdued">{i + 1}.</Text>
+                      <Text as="span" variant="bodySm">{b.name}</Text>
+                    </InlineStack>
+                    <Text as="span" variant="bodySm" tone="subdued">{b.value} prodotti</Text>
                   </InlineStack>
                 ))}
-              </BlockStack>
-            </InlineStack>
-          </BlockStack>
-        </Card>
+              </div>
+            </BlockStack>
+          </Card>
+        )}
 
         {/* ── TABELLA PRODOTTI ── */}
         <Card>
           <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">
-              Tutti i prodotti ({filtered.length}{isFiltered ? ` su ${products.length}` : ""})
-            </Text>
+            <InlineStack align="space-between" blockAlign="center" wrap>
+              <Text as="h2" variant="headingMd">
+                Tutti i prodotti ({filtered.length}{isFiltered ? ` su ${products.length}` : ""})
+              </Text>
+              {totalPages > 1 && (
+                <InlineStack gap="200" blockAlign="center">
+                  <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
+                  <Text as="span" variant="bodySm">
+                    Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} di {sorted.length})
+                  </Text>
+                  <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
+                </InlineStack>
+              )}
+            </InlineStack>
+
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessun prodotto trovato con i filtri selezionati.</Text>
             ) : (
               <DataTable
-                columnContentTypes={["text","text","text","text","numeric","numeric","numeric","numeric","numeric","numeric"]}
-                headings={["Prodotto","Brand","Tipo","Status","Varianti","Stock","Prezzo medio","Venduto","Fatturato","% Fatt."]}
+                columnContentTypes={["text", "text", "text", "text", "numeric", "numeric", "numeric"]}
+                headings={["Prodotto", "Brand", "Tipo", "Status", "Varianti", "Stock", "Prezzo medio"]}
                 rows={tableRows}
+                sortable={[false, true, true, true, true, true, true]}
+                defaultSortDirection="ascending"
+                initialSortColumnIndex={0}
+                onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
               />
+            )}
+
+            {totalPages > 1 && (
+              <InlineStack align="center" gap="200" blockAlign="center">
+                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
+                <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
+                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
+              </InlineStack>
             )}
           </BlockStack>
         </Card>
