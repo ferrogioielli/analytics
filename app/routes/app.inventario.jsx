@@ -31,7 +31,7 @@ export const loader = async ({ request }) => {
         vendor: p.vendor || "",
         productType: p.productType || "",
         status: p.status || "ACTIVE",
-        imageUrl: p.featuredImage?.url || null,
+        tags: p.tags || [],
         variantId: v.id,
         variantTitle: v.title,
         sku: v.sku || "",
@@ -47,8 +47,9 @@ export const loader = async ({ request }) => {
 
   const vendors = [...new Set(variants.map((v) => v.vendor).filter(Boolean))].sort();
   const types = [...new Set(variants.map((v) => v.productType).filter(Boolean))].sort();
+  const allTags = [...new Set(variants.flatMap((v) => v.tags))].sort();
 
-  return json({ variants, vendors, types });
+  return json({ variants, vendors, types, allTags });
 };
 
 function exportCSV(rows, filename) {
@@ -85,13 +86,14 @@ function MarginCell({ margin }) {
 const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue"];
 
 export default function Inventario() {
-  const { variants, vendors, types } = useLoaderData();
+  const { variants, vendors, types, allTags } = useLoaderData();
 
   const [search, setSearch] = useState("");
   const [filterVendor, setFilterVendor] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterScorte, setFilterScorte] = useState("");  // scorte fisiche
   const [filterStatus, setFilterStatus] = useState("");  // stato pubblicazione
+  const [filterTag, setFilterTag] = useState("");         // tag prodotto
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -113,8 +115,10 @@ export default function Inventario() {
     if (filterScorte === "out" && v.qty > 0) return false;
     // Stato pubblicazione (come Shopify: disponibile / bozza / non in elenco)
     if (filterStatus && v.status !== filterStatus) return false;
+    // Tag prodotto
+    if (filterTag && !v.tags.includes(filterTag)) return false;
     return true;
-  }), [variants, search, filterVendor, filterType, filterScorte, filterStatus, thr]);
+  }), [variants, search, filterVendor, filterType, filterScorte, filterStatus, filterTag, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -213,6 +217,7 @@ export default function Inventario() {
 
   const vendorOptions = [{ label: "Tutti i brand", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))];
   const typeOptions = [{ label: "Tutti i tipi", value: "" }, ...types.map((t) => ({ label: t, value: t }))];
+  const tagOptions = [{ label: "Tutti i tag", value: "" }, ...allTags.map((t) => ({ label: t, value: t }))];
   const scorteOptions = [
     { label: "Tutte le scorte", value: "" },
     { label: "A magazzino (disponibile)", value: "in_stock" },
@@ -251,7 +256,7 @@ export default function Inventario() {
               {isFiltered && (
                 <Button size="slim" plain onClick={() => {
                   setSearch(""); setFilterVendor(""); setFilterType("");
-                  setFilterScorte(""); setFilterStatus("");
+                  setFilterScorte(""); setFilterStatus(""); setFilterTag("");
                 }}>
                   Azzera filtri
                 </Button>
@@ -275,6 +280,9 @@ export default function Inventario() {
               </div>
               <div style={{ minWidth: 180 }}>
                 <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select label="Tag" options={tagOptions} value={filterTag} onChange={setFilterTag} />
               </div>
               <div style={{ minWidth: 120 }}>
                 <TextField

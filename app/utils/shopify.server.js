@@ -124,6 +124,7 @@ const PRODUCT_FIELDS = `
   vendor
   productType
   status
+  tags
   totalInventory
   featuredImage { url }
   variants(first: 100) {
