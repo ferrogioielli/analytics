@@ -1,40 +1,40 @@
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable, TextField,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
-  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
 import { fetchCustomers, fetchOrders } from "../utils/shopify.server";
-import { formatCurrency, formatDate, daysAgo, getPrevPeriod } from "../utils/format";
-
-const COLORS = ["#008060", "#1E90FF", "#FFB400", "#FF4D4D"];
+import { formatCurrency, formatDate, daysAgo } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const url = new URL(request.url);
-  const start = url.searchParams.get("start") || daysAgo(30);
-  const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
 
-  const [customers, orders] = await Promise.all([
+  // Carica tutti i clienti + ordini ultimi 30gg (per Top 10 per periodo)
+  const [customers, orders30] = await Promise.all([
     fetchCustomers(admin),
-    fetchOrders(admin, { startDate: start, endDate: end }),
+    fetchOrders(admin, { startDate: daysAgo(30), endDate: today }),
   ]);
 
-  // Nuovi clienti nel periodo = primo ordine nel periodo
-  const newInPeriod = customers.filter((c) => {
-    const created = c.createdAt?.slice(0, 10);
-    return created >= start && created <= end;
-  });
-
-  // Clienti abituali = numberOfOrders > 1
+  // Clienti abituali (>1 ordine)
   const returning = customers.filter((c) => parseInt(c.numberOfOrders) > 1);
 
-  // Nuovi clienti per mese
+  // Nuovi ultimi 30gg (data registrazione)
+  const thirtyDaysAgo = daysAgo(30);
+  const newLast30 = customers.filter((c) => c.createdAt?.slice(0, 10) >= thirtyDaysAgo);
+
+  // Spesa media per cliente (LTV = Lifetime Value = spesa totale media storica)
+  const totalSpent = customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0);
+  const ltv = customers.length > 0 ? totalSpent / customers.length : 0;
+  const currency = customers[0]?.amountSpent?.currencyCode || "EUR";
+
+  // Nuovi clienti per mese (ultimi 12)
   const monthMap = new Map();
   for (const c of customers) {
     const month = c.createdAt?.slice(0, 7);
@@ -46,59 +46,19 @@ export const loader = async ({ request }) => {
     .sort((a, b) => a.month.localeCompare(b.month))
     .slice(-12);
 
-  // LTV medio
-  const totalSpent = customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0);
-  const ltv = customers.length > 0 ? totalSpent / customers.length : 0;
+  // Ordini 30gg serializzati (solo i campi necessari per Top 10 per periodo)
+  const ordersSummary = orders30.map((o) => ({
+    createdAt: o.createdAt,
+    amount: parseFloat(o.totalPriceSet?.shopMoney?.amount || 0),
+    customerId: o.customer?.id || null,
+    customerName: o.customer
+      ? `${o.customer.firstName || ""} ${o.customer.lastName || ""}`.trim() || o.customer.email || "—"
+      : null,
+    customerEmail: o.customer?.email || "—",
+  })).filter((o) => o.customerId);
 
-  // Top per spesa
-  const topCustomers = [...customers].sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0)).slice(0, 10);
-
-  const pieData = [
-    { name: "Nuovi nel periodo", value: newInPeriod.length },
-    { name: "Abituali (>1 ordine)", value: returning.length },
-  ];
-
-  return json({ customers, newInPeriod, returning, newByMonth, ltv, topCustomers, pieData, start, end });
+  return json({ customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency });
 };
-
-function DateRangePicker({ start, end }) {
-  const navigate = useNavigate();
-  const today = new Date().toISOString().slice(0, 10);
-  const [cs, setCs] = useState(start);
-  const [ce, setCe] = useState(end);
-  useEffect(() => setCs(start), [start]);
-  useEffect(() => setCe(end), [end]);
-  const presets = [
-    { label: "30 giorni", start: daysAgo(30), end: today },
-    { label: "90 giorni", start: daysAgo(90), end: today },
-    { label: "Anno", start: `${new Date().getFullYear()}-01-01`, end: today },
-  ];
-  return (
-    <BlockStack gap="200">
-      <InlineStack gap="200" blockAlign="center" wrap>
-        <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
-        {presets.map((p) => (
-          <Button key={p.label} size="slim"
-            variant={start === p.start && end === p.end ? "primary" : "plain"}
-            onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
-            {p.label}
-          </Button>
-        ))}
-      </InlineStack>
-      <InlineStack gap="200" blockAlign="end" wrap>
-        <div style={{ minWidth: 150 }}>
-          <TextField label="Dal" type="date" value={cs} onChange={setCs} autoComplete="off" />
-        </div>
-        <div style={{ minWidth: 150 }}>
-          <TextField label="Al" type="date" value={ce} onChange={setCe} autoComplete="off" />
-        </div>
-        <div style={{ paddingTop: 22 }}>
-          <Button onClick={() => navigate(`?start=${cs}&end=${ce}`)}>Applica</Button>
-        </div>
-      </InlineStack>
-    </BlockStack>
-  );
-}
 
 function exportCSV(rows, filename) {
   if (!rows.length) return;
@@ -119,27 +79,68 @@ function exportExcel(rows, filename) {
   });
 }
 
+// Aggrega ordini per cliente e restituisce top N
+function topByOrders(orders, n = 10) {
+  const map = new Map();
+  for (const o of orders) {
+    if (!o.customerId) continue;
+    if (!map.has(o.customerId)) map.set(o.customerId, { name: o.customerName, email: o.customerEmail, spend: 0, orders: 0 });
+    map.get(o.customerId).spend += o.amount;
+    map.get(o.customerId).orders += 1;
+  }
+  return [...map.values()].sort((a, b) => b.spend - a.spend).slice(0, n);
+}
+
+const RFM_SEGMENTS = [
+  { key: "Champions",   color: "#008060", tone: "success",  label: "Champion",    desc: "Compra spesso, ha speso tanto, è tornato di recente. Cliente ideale." },
+  { key: "Abituali",   color: "#1E90FF", tone: "info",     label: "Abituale",    desc: "Torna regolarmente, ≥2 ordini negli ultimi 60 giorni." },
+  { key: "Nuovi",      color: "#2ECC71", tone: "success",  label: "Nuovo",       desc: "Ha fatto il primo ordine negli ultimi 30 giorni. Da fidelizzare." },
+  { key: "Occasionali",color: "#FFB400", tone: "warning",  label: "Occasionale", desc: "Compra ogni tanto, senza un ritmo preciso." },
+  { key: "A rischio",  color: "#FF4D4D", tone: "critical", label: "A rischio",   desc: "Aveva ≥2 ordini ma non compra da oltre 90 giorni. Da ricontattare." },
+  { key: "Persi",      color: "#888888", tone: "critical", label: "Perso",       desc: "Nessun acquisto da oltre 180 giorni." },
+];
+
 export default function Clienti() {
-  const { customers, newInPeriod, returning, newByMonth, ltv, topCustomers, pieData, start, end } = useLoaderData();
+  const { customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency } = useLoaderData();
+
   const [search, setSearch] = useState("");
   const [minOrders, setMinOrders] = useState("");
+  const [top10Period, setTop10Period] = useState("tutto"); // oggi | settimana | mese | tutto
 
-  const filtered = useMemo(() => customers.filter((c) => {
-    const fullName = `${c.firstName || ""} ${c.lastName || ""} ${c.email || ""}`.toLowerCase();
-    if (search && !fullName.includes(search.toLowerCase())) return false;
-    if (minOrders && parseInt(c.numberOfOrders) < parseInt(minOrders)) return false;
-    return true;
-  }), [customers, search, minOrders]);
+  // ── Top 10 filtrato per periodo ──
+  const top10 = useMemo(() => {
+    if (top10Period === "tutto") {
+      // Usa amountSpent storico dai clienti
+      return [...customers]
+        .sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0))
+        .slice(0, 10)
+        .map((c) => ({
+          name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
+          email: c.email || "—",
+          spend: parseFloat(c.amountSpent?.amount || 0),
+          orders: parseInt(c.numberOfOrders) || 0,
+        }));
+    }
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const filtered = ordersSummary.filter((o) => {
+      const d = o.createdAt.slice(0, 10);
+      if (top10Period === "oggi") return d === todayStr;
+      if (top10Period === "settimana") return d >= daysAgo(7);
+      if (top10Period === "mese") return d >= daysAgo(30);
+      return true;
+    });
+    return topByOrders(filtered, 10);
+  }, [customers, ordersSummary, top10Period]);
 
-  // RFM segmentation
-  const today = new Date();
+  // ── RFM segmentation ──
   const rfmSegments = useMemo(() => {
     const avgSpent = customers.length > 0
       ? customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0) / customers.length
       : 0;
+    const now = new Date();
     return customers.map((c) => {
       const lastOrderDate = c.lastOrder?.createdAt ? new Date(c.lastOrder.createdAt) : null;
-      const daysSinceLast = lastOrderDate ? Math.floor((today - lastOrderDate) / 86400000) : 9999;
+      const daysSinceLast = lastOrderDate ? Math.floor((now - lastOrderDate) / 86400000) : 9999;
       const freq = parseInt(c.numberOfOrders) || 0;
       const monetary = parseFloat(c.amountSpent?.amount || 0);
       let segment;
@@ -156,7 +157,7 @@ export default function Clienti() {
   const segmentCounts = useMemo(() => {
     const map = {};
     for (const c of rfmSegments) map[c.segment] = (map[c.segment] || 0) + 1;
-    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+    return map;
   }, [rfmSegments]);
 
   const atRisk = useMemo(() =>
@@ -164,6 +165,14 @@ export default function Clienti() {
       .sort((a, b) => b.daysSinceLast - a.daysSinceLast)
       .slice(0, 10)
   , [rfmSegments]);
+
+  // ── Tabella clienti filtrata ──
+  const filtered = useMemo(() => customers.filter((c) => {
+    const fullName = `${c.firstName || ""} ${c.lastName || ""} ${c.email || ""}`.toLowerCase();
+    if (search && !fullName.includes(search.toLowerCase())) return false;
+    if (minOrders && parseInt(c.numberOfOrders) < parseInt(minOrders)) return false;
+    return true;
+  }), [customers, search, minOrders]);
 
   const tableRows = filtered.slice(0, 200).map((c) => [
     `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
@@ -180,117 +189,150 @@ export default function Clienti() {
     "N. ordini": c.numberOfOrders,
     "Spesa totale": parseFloat(c.amountSpent?.amount || 0).toFixed(2),
     "Ultimo ordine": c.lastOrder ? formatDate(c.lastOrder.createdAt) : "",
-    "Data registrazione": formatDate(c.createdAt),
+    "Registrato il": formatDate(c.createdAt),
   }));
+
+  const periodLabels = [
+    { key: "oggi", label: "Oggi" },
+    { key: "settimana", label: "Settimana" },
+    { key: "mese", label: "Mese" },
+    { key: "tutto", label: "Tutto" },
+  ];
 
   return (
     <Page title="Clienti">
       <TitleBar title="Clienti" />
       <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="center" wrap>
-          <DateRangePicker start={start} end={end} />
+
+        {/* ── HEADER export ── */}
+        <InlineStack align="end">
           <InlineStack gap="200">
-            <Button size="slim" onClick={() => exportCSV(exportRows, `clienti_${start}_${end}.csv`)}>CSV</Button>
-            <Button size="slim" onClick={() => exportExcel(exportRows, `clienti_${start}_${end}.xlsx`)}>Excel</Button>
+            <Button size="slim" onClick={() => exportCSV(exportRows, "clienti.csv")}>CSV</Button>
+            <Button size="slim" onClick={() => exportExcel(exportRows, "clienti.xlsx")}>Excel</Button>
           </InlineStack>
         </InlineStack>
 
-        {/* KPI */}
-        <Layout>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
+        {/* ── KPI riga unica ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          <Card>
+            <BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">Clienti totali</Text>
               <Text as="p" variant="headingLg" fontWeight="bold">{customers.length}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Nuovi nel periodo</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{newInPeriod.length}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">LTV medio</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(ltv)}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Clienti abituali</Text>
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Abituali (≥2 ordini)</Text>
               <Text as="p" variant="headingLg" fontWeight="bold">{returning.length}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">&gt;1 ordine</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-        </Layout>
+              <Text as="p" variant="bodySm" tone="subdued">{customers.length > 0 ? ((returning.length / customers.length) * 100).toFixed(0) : 0}% del totale</Text>
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="100">
+              <span title="Spesa media storica per cliente (Lifetime Value): somma totale spesa / numero clienti" style={{ cursor: "help" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Spesa media cliente ⓘ</Text>
+              </span>
+              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(ltv, currency)}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">media storica per cliente</Text>
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Nuovi ultimi 30gg</Text>
+              <Text as="p" variant="headingLg" fontWeight="bold">{newLast30.length}</Text>
+            </BlockStack>
+          </Card>
+        </div>
 
-        {/* Segmentazione RFM */}
-        <Layout>
-          <Layout.Section variant="oneThird">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Segmentazione clienti (RFM)</Text>
-                {segmentCounts.map(([seg, count]) => {
-                  const colors = {
-                    Champions: "#008060", Abituali: "#1E90FF", Nuovi: "#2ECC71",
-                    Occasionali: "#FFB400", "A rischio": "#FF4D4D", Persi: "#888",
-                  };
-                  return (
-                    <InlineStack key={seg} align="space-between" blockAlign="center">
+        {/* ── TOP 10 + RFM ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+
+          {/* TOP 10 con filtro periodo */}
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center" wrap>
+                <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
+                <InlineStack gap="100">
+                  {periodLabels.map(({ key, label }) => (
+                    <Button key={key} size="slim"
+                      variant={top10Period === key ? "primary" : "plain"}
+                      onClick={() => setTop10Period(key)}>
+                      {label}
+                    </Button>
+                  ))}
+                </InlineStack>
+              </InlineStack>
+
+              {top10.length === 0 ? (
+                <Text as="p" tone="subdued">Nessun ordine nel periodo selezionato.</Text>
+              ) : (
+                <BlockStack gap="0">
+                  {top10.map((c, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: i < top10.length - 1 ? "1px solid #f0f0f0" : "none" }}>
                       <InlineStack gap="200" blockAlign="center">
-                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: colors[seg] || "#ccc", flexShrink: 0 }} />
-                        <Text as="span" variant="bodySm">{seg}</Text>
+                        <span style={{ fontSize: 13, color: "#6d7175", minWidth: 20, fontWeight: 600 }}>{i + 1}.</span>
+                        <BlockStack gap="0">
+                          <Text as="span" variant="bodySm" fontWeight="semibold">{c.name}</Text>
+                          <Text as="span" variant="bodySm" tone="subdued">{c.email}</Text>
+                        </BlockStack>
                       </InlineStack>
-                      <Badge tone={seg === "Champions" ? "success" : seg === "A rischio" || seg === "Persi" ? "critical" : "info"}>
-                        {count}
-                      </Badge>
-                    </InlineStack>
+                      <BlockStack gap="0">
+                        <Text as="span" variant="bodySm" fontWeight="semibold" alignment="end">{formatCurrency(c.spend, currency)}</Text>
+                        <Text as="span" variant="bodySm" tone="subdued" alignment="end">{c.orders} {c.orders === 1 ? "ordine" : "ordini"}</Text>
+                      </BlockStack>
+                    </div>
+                  ))}
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+
+          {/* SEGMENTAZIONE clienti */}
+          <Card>
+            <BlockStack gap="300">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">Segmentazione clienti</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Basata su recenza, frequenza e spesa (metodo RFM). Ogni cliente riceve un'etichetta automatica.
+                </Text>
+              </BlockStack>
+
+              <BlockStack gap="0">
+                {RFM_SEGMENTS.map(({ key, color, tone, label, desc }) => {
+                  const count = segmentCounts[key] || 0;
+                  if (count === 0) return null;
+                  return (
+                    <div key={key} style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>
+                      <InlineStack align="space-between" blockAlign="start">
+                        <InlineStack gap="200" blockAlign="center">
+                          <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0, marginTop: 3 }} />
+                          <BlockStack gap="0">
+                            <Text as="span" variant="bodySm" fontWeight="semibold">{label}</Text>
+                            <Text as="span" variant="bodySm" tone="subdued">{desc}</Text>
+                          </BlockStack>
+                        </InlineStack>
+                        <Badge tone={tone}>{count}</Badge>
+                      </InlineStack>
+                    </div>
                   );
                 })}
-                <div style={{ borderTop: "1px solid #e1e3e5", paddingTop: 8, marginTop: 4 }}>
-                  {[
-                    { seg: "Champions", desc: "Ultimo ordine ≤30gg, ≥3 ordini, spesa sopra media — clienti più fedeli" },
-                    { seg: "Abituali", desc: "Ultimo ordine ≤60gg, ≥2 ordini — acquistano regolarmente" },
-                    { seg: "Nuovi", desc: "Primo e unico ordine negli ultimi 30 giorni" },
-                    { seg: "Occasionali", desc: "Non rientrano in altre categorie" },
-                    { seg: "A rischio", desc: "Inattivi >90gg ma con ≥2 ordini — da ricontattare" },
-                    { seg: "Persi", desc: "Inattivi da oltre 180 giorni" },
-                  ].map(({ seg, desc }) => (
-                    <Text key={seg} as="p" variant="bodySm" tone="subdued" title={desc} style={{ cursor: "help", marginBottom: 2 }}>
-                      <strong>{seg}</strong>: {desc}
-                    </Text>
-                  ))}
-                </div>
               </BlockStack>
-            </Card>
-          </Layout.Section>
+            </BlockStack>
+          </Card>
+        </div>
 
-          <Layout.Section variant="twoThirds">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
-                <DataTable
-                  columnContentTypes={["text","text","numeric","numeric"]}
-                  headings={["Nome","Email","Ordini","Spesa totale"]}
-                  rows={topCustomers.map((c) => [
-                    `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
-                    c.email || "—",
-                    c.numberOfOrders.toString(),
-                    formatCurrency(parseFloat(c.amountSpent?.amount || 0), c.amountSpent?.currencyCode),
-                  ])}
-                />
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* Clienti a rischio */}
+        {/* ── CLIENTI A RISCHIO / PERSI ── */}
         {atRisk.length > 0 && (
           <Card>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">Clienti a rischio / persi</Text>
-                <Badge tone="critical">{atRisk.length} clienti</Badge>
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">Clienti a rischio / persi</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Clienti che avevano già acquistato ma non si vedono da oltre 90 giorni — considera di ricontattarli.
+                  </Text>
+                </BlockStack>
+                <Badge tone="critical">{atRisk.length}</Badge>
               </InlineStack>
               <DataTable
                 columnContentTypes={["text","text","numeric","numeric","text"]}
@@ -307,64 +349,37 @@ export default function Clienti() {
           </Card>
         )}
 
-        {/* Grafici */}
-        <Layout>
-          <Layout.Section variant="oneThird">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Nuovi vs abituali</Text>
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
-                      label={({ name, percent }) => percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ""} labelLine={false}>
-                      {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-                {pieData.map((d, i) => (
-                  <InlineStack key={i} gap="200" blockAlign="center">
-                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS[i], flexShrink: 0 }} />
-                    <Text as="span" variant="bodySm">{d.name}: {d.value}</Text>
-                  </InlineStack>
-                ))}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
+        {/* ── NUOVI CLIENTI PER MESE ── */}
+        {newByMonth.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Nuovi clienti per mese (ultimi 12)</Text>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={newByMonth} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" name="Nuovi clienti" fill="#008060" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </BlockStack>
+          </Card>
+        )}
 
-          <Layout.Section variant="twoThirds">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Nuovi clienti per mese (ultimi 12)</Text>
-                {newByMonth.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessun dato.</Text>
-                ) : (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={newByMonth} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="count" name="Nuovi clienti" fill="#008060" radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* Tabella */}
+        {/* ── TABELLA CLIENTI ── */}
         <Card>
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center" wrap>
-              <Text as="h2" variant="headingMd">Clienti ({filtered.length}{filtered.length > 200 ? ", mostrando 200" : ""})</Text>
+              <Text as="h2" variant="headingMd">
+                Tutti i clienti ({filtered.length}{filtered.length > 200 ? ", mostrando i primi 200" : ""})
+              </Text>
               <InlineStack gap="200" wrap>
-                <div style={{ minWidth: 200 }}>
+                <div style={{ minWidth: 220 }}>
                   <TextField label="" labelHidden placeholder="Cerca nome / email..." value={search} onChange={setSearch} autoComplete="off" />
                 </div>
-                <div style={{ minWidth: 140 }}>
-                  <TextField label="" labelHidden placeholder="Min ordini..." type="number" value={minOrders} onChange={setMinOrders} autoComplete="off" />
+                <div style={{ minWidth: 130 }}>
+                  <TextField label="" labelHidden placeholder="Min. ordini..." type="number" value={minOrders} onChange={setMinOrders} autoComplete="off" />
                 </div>
               </InlineStack>
             </InlineStack>
@@ -379,6 +394,7 @@ export default function Clienti() {
             )}
           </BlockStack>
         </Card>
+
       </BlockStack>
     </Page>
   );
