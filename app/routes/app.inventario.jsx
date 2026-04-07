@@ -84,16 +84,17 @@ function MarginCell({ margin }) {
 }
 
 /**
- * Componente multi-select riutilizzabile basato su Polaris Popover + OptionList.
- * selected: string[]
- * onChange: (string[]) => void
+ * Multi-select con "seleziona tutti" per default.
+ * selected: string[] — valori attualmente selezionati (spuntati).
+ * allValues: string[] — tutti i valori possibili.
+ * Mostra come pill gli elementi ESCLUSI (deselezionati), con X per riabilitarli.
  */
-function MultiSelect({ label, placeholder, options, selected, onChange }) {
+function MultiSelect({ label, allLabel, options, selected, onChange, allValues }) {
   const [open, setOpen] = useState(false);
-
   const toggle = useCallback(() => setOpen((v) => !v), []);
 
-  const removeItem = (val) => onChange(selected.filter((s) => s !== val));
+  const isAll = selected.length === allValues.length;
+  const excluded = allValues.filter((v) => !selected.includes(v));
 
   const labelMap = useMemo(() => {
     const m = {};
@@ -101,9 +102,7 @@ function MultiSelect({ label, placeholder, options, selected, onChange }) {
     return m;
   }, [options]);
 
-  const activatorLabel = selected.length === 0
-    ? placeholder
-    : `${label}: ${selected.length} selezionati`;
+  const reinclude = (val) => onChange([...selected, val]);
 
   return (
     <BlockStack gap="100">
@@ -112,26 +111,37 @@ function MultiSelect({ label, placeholder, options, selected, onChange }) {
         active={open}
         activator={
           <Button size="slim" disclosure onClick={toggle} fullWidth textAlign="left">
-            {activatorLabel}
+            {isAll ? allLabel : `${selected.length} / ${allValues.length} selezionati`}
           </Button>
         }
         onClose={() => setOpen(false)}
         preferredAlignment="left"
       >
-        <div style={{ minWidth: 220, maxHeight: 280, overflowY: "auto" }}>
-          <OptionList
-            options={options}
-            selected={selected}
-            onChange={onChange}
-            allowMultiple
-          />
+        <div style={{ minWidth: 220 }}>
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid #e1e3e5" }}>
+            <Button
+              size="slim"
+              plain
+              onClick={() => onChange(isAll ? [] : [...allValues])}
+            >
+              {isAll ? "Deseleziona tutti" : "Seleziona tutti"}
+            </Button>
+          </div>
+          <div style={{ maxHeight: 260, overflowY: "auto" }}>
+            <OptionList
+              options={options}
+              selected={selected}
+              onChange={onChange}
+              allowMultiple
+            />
+          </div>
         </div>
       </Popover>
-      {selected.length > 0 && (
+      {excluded.length > 0 && (
         <InlineStack gap="100" wrap>
-          {selected.map((val) => (
-            <Tag key={val} onRemove={() => removeItem(val)}>
-              {labelMap[val] || val}
+          {excluded.map((val) => (
+            <Tag key={val} onRemove={() => reinclude(val)}>
+              ✕ {labelMap[val] || val}
             </Tag>
           ))}
         </InlineStack>
@@ -146,13 +156,11 @@ export default function Inventario() {
   const { variants, vendors, types, allTags } = useLoaderData();
 
   const [search, setSearch] = useState("");
-  const [filterVendors, setFilterVendors] = useState([]);
-  const [filterTypes, setFilterTypes] = useState([]);
-  const [filterScorte] = useState("");
+  // Partono tutti selezionati — togliere = escludere
+  const [filterVendors, setFilterVendors] = useState(() => vendors);
+  const [filterTypes, setFilterTypes] = useState(() => types);
+  const [filterTags, setFilterTags] = useState(() => allTags);
   const [filterStatus, setFilterStatus] = useState("");
-  const [filterTags, setFilterTags] = useState([]);
-  const [excludeVendors, setExcludeVendors] = useState([]);
-  const [excludeTags, setExcludeTags] = useState([]);
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -166,17 +174,19 @@ export default function Inventario() {
       const s = search.toLowerCase();
       if (!v.productTitle.toLowerCase().includes(s) && !v.sku.toLowerCase().includes(s)) return false;
     }
-    if (filterVendors.length > 0 && !filterVendors.includes(v.vendor)) return false;
-    if (filterTypes.length > 0 && !filterTypes.includes(v.productType)) return false;
-    if (filterScorte === "in_stock" && v.qty <= 0) return false;
-    if (filterScorte === "low" && (v.qty <= 0 || v.qty > thr)) return false;
-    if (filterScorte === "out" && v.qty > 0) return false;
+    // Brand: mostra solo quelli selezionati (non selezionato = escluso)
+    if (filterVendors.length < vendors.length && !filterVendors.includes(v.vendor)) return false;
+    // Tipo prodotto
+    if (filterTypes.length < types.length && !filterTypes.includes(v.productType)) return false;
+    // Stato pubblicazione
     if (filterStatus && v.status !== filterStatus) return false;
-    if (filterTags.length > 0 && !filterTags.some((t) => v.tags.includes(t))) return false;
-    if (excludeVendors.length > 0 && excludeVendors.includes(v.vendor)) return false;
-    if (excludeTags.length > 0 && excludeTags.some((t) => v.tags.includes(t))) return false;
+    // Tag: nasconde le varianti che hanno un tag deselezionato
+    if (filterTags.length < allTags.length) {
+      const excluded = allTags.filter((t) => !filterTags.includes(t));
+      if (excluded.some((t) => v.tags.includes(t))) return false;
+    }
     return true;
-  }), [variants, search, filterVendors, filterTypes, filterScorte, filterStatus, filterTags, excludeVendors, excludeTags, thr]);
+  }), [variants, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -284,12 +294,10 @@ export default function Inventario() {
 
   const resetFilters = () => {
     setSearch("");
-    setFilterVendors([]);
-    setFilterTypes([]);
+    setFilterVendors(vendors);
+    setFilterTypes(types);
+    setFilterTags(allTags);
     setFilterStatus("");
-    setFilterTags([]);
-    setExcludeVendors([]);
-    setExcludeTags([]);
   };
 
   return (
@@ -316,7 +324,7 @@ export default function Inventario() {
               )}
             </InlineStack>
 
-            {/* Riga 1: Cerca + Scorte + Stato + Soglia */}
+            {/* Riga 1: Cerca + Stato + Soglia */}
             <InlineStack gap="300" wrap blockAlign="start">
               <div style={{ minWidth: 220 }}>
                 <TextField
@@ -336,55 +344,36 @@ export default function Inventario() {
               </div>
             </InlineStack>
 
-            {/* Riga 2: Multi-select includi */}
+            {/* Riga 2: Multi-select Brand + Tipo + Tag */}
             <InlineStack gap="300" wrap blockAlign="start">
               <div style={{ minWidth: 200 }}>
                 <MultiSelect
                   label="Brand"
-                  placeholder="Tutti i brand"
+                  allLabel="Tutti i brand"
                   options={vendorOptionList}
                   selected={filterVendors}
                   onChange={setFilterVendors}
+                  allValues={vendors}
                 />
               </div>
               <div style={{ minWidth: 200 }}>
                 <MultiSelect
                   label="Tipo prodotto"
-                  placeholder="Tutti i tipi"
+                  allLabel="Tutti i tipi"
                   options={typeOptionList}
                   selected={filterTypes}
                   onChange={setFilterTypes}
+                  allValues={types}
                 />
               </div>
               <div style={{ minWidth: 200 }}>
                 <MultiSelect
-                  label="Tag (includi)"
-                  placeholder="Tutti i tag"
+                  label="Tag"
+                  allLabel="Tutti i tag"
                   options={tagOptionList}
                   selected={filterTags}
                   onChange={setFilterTags}
-                />
-              </div>
-            </InlineStack>
-
-            {/* Riga 3: Multi-select escludi */}
-            <InlineStack gap="300" wrap blockAlign="start">
-              <div style={{ minWidth: 200 }}>
-                <MultiSelect
-                  label="Escludi brand"
-                  placeholder="Nessuna esclusione"
-                  options={vendorOptionList}
-                  selected={excludeVendors}
-                  onChange={setExcludeVendors}
-                />
-              </div>
-              <div style={{ minWidth: 200 }}>
-                <MultiSelect
-                  label="Escludi tag"
-                  placeholder="Nessuna esclusione"
-                  options={tagOptionList}
-                  selected={excludeTags}
-                  onChange={setExcludeTags}
+                  allValues={allTags}
                 />
               </div>
             </InlineStack>
@@ -449,9 +438,8 @@ export default function Inventario() {
                     plain
                     onClick={() => {
                       if (b.brand === "—") return;
-                      setFilterVendors((prev) =>
-                        prev.includes(b.brand) ? prev : [...prev, b.brand]
-                      );
+                      // Mostra solo questo brand (deseleziona tutti gli altri)
+                      setFilterVendors([b.brand]);
                     }}
                   >
                     {b.brand}
