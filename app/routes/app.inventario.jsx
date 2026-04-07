@@ -1,9 +1,9 @@
 import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, Thumbnail, TextField,
+  DataTable, Select, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -95,6 +95,8 @@ export default function Inventario() {
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
 
   const thr = Math.max(1, parseInt(threshold) || 5);
 
@@ -124,6 +126,12 @@ export default function Inventario() {
       return sortDir === "ascending" ? cmp : -cmp;
     });
   }, [filtered, sortCol, sortDir]);
+
+  // Reset pagina al cambio filtri/sorting
+  useEffect(() => setPage(0), [filtered, sortCol, sortDir]);
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const pageData = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   // KPI dinamici sul filtro
   const filteredTotalValue = useMemo(() => filtered.reduce((s, v) => s + v.stockValue, 0), [filtered]);
@@ -166,11 +174,8 @@ export default function Inventario() {
       }))
   , [filtered]);
 
-  const tableRows = sorted.slice(0, 500).map((v) => [
-    <InlineStack key={v.variantId} gap="200" blockAlign="center">
-      {v.imageUrl && <Thumbnail source={v.imageUrl} size="small" alt={v.productTitle} />}
-      <Text as="span" variant="bodySm">{v.productTitle}</Text>
-    </InlineStack>,
+  const tableRows = pageData.map((v) => [
+    <Text key={v.variantId} as="span" variant="bodySm">{v.productTitle}</Text>,
     v.variantTitle !== "Default Title" ? v.variantTitle : "—",
     v.sku || "—",
     v.vendor || "—",
@@ -230,7 +235,6 @@ export default function Inventario() {
 
         {/* ── HEADER ── */}
         <InlineStack align="space-between" blockAlign="center" wrap>
-          <Text as="h1" variant="headingLg">Inventario magazzino</Text>
           <InlineStack gap="200">
             <Button size="slim" onClick={() => exportCSV(exportRows, "inventario.csv")}>CSV varianti</Button>
             <Button size="slim" onClick={() => exportExcel(exportRows, "inventario.xlsx")}>Excel varianti</Button>
@@ -373,10 +377,19 @@ export default function Inventario() {
         {/* ── TABELLA VARIANTI ── */}
         <Card>
           <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
+            <InlineStack align="space-between" blockAlign="center" wrap>
               <Text as="h2" variant="headingMd">
-                Varianti ({filtered.length}{filtered.length > 500 ? " — mostrando 500" : ""}{isFiltered ? ` su ${variants.length}` : ""})
+                Varianti ({filtered.length}{isFiltered ? ` su ${variants.length}` : ""})
               </Text>
+              {totalPages > 1 && (
+                <InlineStack gap="200" blockAlign="center">
+                  <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
+                  <Text as="span" variant="bodySm">
+                    Pagina {page + 1} di {totalPages} ({PAGE_SIZE * page + 1}–{Math.min(PAGE_SIZE * (page + 1), sorted.length)} di {sorted.length})
+                  </Text>
+                  <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
+                </InlineStack>
+              )}
             </InlineStack>
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessuna variante trovata con i filtri selezionati.</Text>
@@ -390,6 +403,13 @@ export default function Inventario() {
                 initialSortColumnIndex={9}
                 onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
               />
+            )}
+            {totalPages > 1 && (
+              <InlineStack align="center" gap="200" blockAlign="center">
+                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
+                <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
+                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
+              </InlineStack>
             )}
           </BlockStack>
         </Card>
