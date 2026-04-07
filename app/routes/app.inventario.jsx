@@ -1,9 +1,9 @@
 import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, TextField,
+  DataTable, Select, TextField, Popover, OptionList, Tag,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -83,19 +83,76 @@ function MarginCell({ margin }) {
   return <span style={{ color, fontWeight: 500 }}>{margin.toFixed(1)}%</span>;
 }
 
+/**
+ * Componente multi-select riutilizzabile basato su Polaris Popover + OptionList.
+ * selected: string[]
+ * onChange: (string[]) => void
+ */
+function MultiSelect({ label, placeholder, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+
+  const toggle = useCallback(() => setOpen((v) => !v), []);
+
+  const removeItem = (val) => onChange(selected.filter((s) => s !== val));
+
+  const labelMap = useMemo(() => {
+    const m = {};
+    for (const o of options) m[o.value] = o.label;
+    return m;
+  }, [options]);
+
+  const activatorLabel = selected.length === 0
+    ? placeholder
+    : `${label}: ${selected.length} selezionati`;
+
+  return (
+    <BlockStack gap="100">
+      <Text as="span" variant="bodySm">{label}</Text>
+      <Popover
+        active={open}
+        activator={
+          <Button size="slim" disclosure onClick={toggle} fullWidth textAlign="left">
+            {activatorLabel}
+          </Button>
+        }
+        onClose={() => setOpen(false)}
+        preferredAlignment="left"
+      >
+        <div style={{ minWidth: 220, maxHeight: 280, overflowY: "auto" }}>
+          <OptionList
+            options={options}
+            selected={selected}
+            onChange={onChange}
+            allowMultiple
+          />
+        </div>
+      </Popover>
+      {selected.length > 0 && (
+        <InlineStack gap="100" wrap>
+          {selected.map((val) => (
+            <Tag key={val} onRemove={() => removeItem(val)}>
+              {labelMap[val] || val}
+            </Tag>
+          ))}
+        </InlineStack>
+      )}
+    </BlockStack>
+  );
+}
+
 const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue"];
 
 export default function Inventario() {
   const { variants, vendors, types, allTags } = useLoaderData();
 
   const [search, setSearch] = useState("");
-  const [filterVendor, setFilterVendor] = useState("");
-  const [filterType, setFilterType] = useState("");
-  const [filterScorte, setFilterScorte] = useState("");  // scorte fisiche
-  const [filterStatus, setFilterStatus] = useState("");  // stato pubblicazione
-  const [filterTag, setFilterTag] = useState("");         // tag prodotto (includi)
-  const [excludeVendor, setExcludeVendor] = useState(""); // brand da escludere
-  const [excludeTag, setExcludeTag] = useState("");       // tag da escludere
+  const [filterVendors, setFilterVendors] = useState([]);
+  const [filterTypes, setFilterTypes] = useState([]);
+  const [filterScorte] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterTags, setFilterTags] = useState([]);
+  const [excludeVendors, setExcludeVendors] = useState([]);
+  const [excludeTags, setExcludeTags] = useState([]);
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(9);
   const [sortDir, setSortDir] = useState("descending");
@@ -109,21 +166,17 @@ export default function Inventario() {
       const s = search.toLowerCase();
       if (!v.productTitle.toLowerCase().includes(s) && !v.sku.toLowerCase().includes(s)) return false;
     }
-    if (filterVendor && v.vendor !== filterVendor) return false;
-    if (filterType && v.productType !== filterType) return false;
-    // Scorte fisiche (come Shopify: a magazzino / basso / esaurito)
+    if (filterVendors.length > 0 && !filterVendors.includes(v.vendor)) return false;
+    if (filterTypes.length > 0 && !filterTypes.includes(v.productType)) return false;
     if (filterScorte === "in_stock" && v.qty <= 0) return false;
     if (filterScorte === "low" && (v.qty <= 0 || v.qty > thr)) return false;
     if (filterScorte === "out" && v.qty > 0) return false;
-    // Stato pubblicazione (come Shopify: disponibile / bozza / non in elenco)
     if (filterStatus && v.status !== filterStatus) return false;
-    // Tag prodotto (includi)
-    if (filterTag && !v.tags.includes(filterTag)) return false;
-    // Esclusioni
-    if (excludeVendor && v.vendor === excludeVendor) return false;
-    if (excludeTag && v.tags.includes(excludeTag)) return false;
+    if (filterTags.length > 0 && !filterTags.some((t) => v.tags.includes(t))) return false;
+    if (excludeVendors.length > 0 && excludeVendors.includes(v.vendor)) return false;
+    if (excludeTags.length > 0 && excludeTags.some((t) => v.tags.includes(t))) return false;
     return true;
-  }), [variants, search, filterVendor, filterType, filterScorte, filterStatus, filterTag, excludeVendor, excludeTag, thr]);
+  }), [variants, search, filterVendors, filterTypes, filterScorte, filterStatus, filterTags, excludeVendors, excludeTags, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -136,13 +189,11 @@ export default function Inventario() {
     });
   }, [filtered, sortCol, sortDir]);
 
-  // Reset pagina al cambio filtri/sorting
   useEffect(() => setPage(0), [filtered, sortCol, sortDir]);
 
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
   const pageData = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  // KPI dinamici sul filtro
   const filteredTotalValue = useMemo(() => filtered.reduce((s, v) => s + v.stockValue, 0), [filtered]);
   const filteredSalesValue = useMemo(() => filtered.reduce((s, v) => s + v.salesValue, 0), [filtered]);
   const filteredTotalQty = useMemo(() => filtered.reduce((s, v) => s + v.qty, 0), [filtered]);
@@ -154,7 +205,6 @@ export default function Inventario() {
     return withCost.reduce((s, v) => s + v.margin, 0) / withCost.length;
   }, [filtered]);
 
-  // Riepilogo per brand (sul filtro attivo)
   const brandSummary = useMemo(() => {
     const map = new Map();
     for (const v of filtered) {
@@ -172,7 +222,6 @@ export default function Inventario() {
       .sort((a, b) => b.stockValue - a.stockValue);
   }, [filtered]);
 
-  // Top 20 chart
   const topByValue = useMemo(() =>
     [...filtered]
       .sort((a, b) => b.stockValue - a.stockValue)
@@ -220,15 +269,10 @@ export default function Inventario() {
     "Margine medio %": b.avgMargin !== null ? b.avgMargin.toFixed(1) : "",
   }));
 
-  const vendorOptions = [{ label: "Tutti i brand", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))];
-  const typeOptions = [{ label: "Tutti i tipi", value: "" }, ...types.map((t) => ({ label: t, value: t }))];
-  const tagOptions = [{ label: "Tutti i tag", value: "" }, ...allTags.map((t) => ({ label: t, value: t }))];
-  const scorteOptions = [
-    { label: "Tutte le scorte", value: "" },
-    { label: "A magazzino (disponibile)", value: "in_stock" },
-    { label: `Scorte basse (1–${thr} pz)`, value: "low" },
-    { label: "Esaurito (0 pz)", value: "out" },
-  ];
+  const vendorOptionList = vendors.map((v) => ({ label: v, value: v }));
+  const typeOptionList = types.map((t) => ({ label: t, value: t }));
+  const tagOptionList = allTags.map((t) => ({ label: t, value: t }));
+
   const statusOptions = [
     { label: "Tutti gli stati", value: "" },
     { label: "Disponibile", value: "ACTIVE" },
@@ -237,6 +281,16 @@ export default function Inventario() {
   ];
 
   const isFiltered = filtered.length < variants.length;
+
+  const resetFilters = () => {
+    setSearch("");
+    setFilterVendors([]);
+    setFilterTypes([]);
+    setFilterStatus("");
+    setFilterTags([]);
+    setExcludeVendors([]);
+    setExcludeTags([]);
+  };
 
   return (
     <Page title="Inventario">
@@ -252,22 +306,18 @@ export default function Inventario() {
           </InlineStack>
         </InlineStack>
 
-        {/* ── FILTRI (sopra i KPI) ── */}
+        {/* ── FILTRI ── */}
         <Card>
-          <BlockStack gap="300">
+          <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
               <Text as="h2" variant="headingMd">Filtri</Text>
               {isFiltered && (
-                <Button size="slim" plain onClick={() => {
-                  setSearch(""); setFilterVendor(""); setFilterType("");
-                  setFilterScorte(""); setFilterStatus(""); setFilterTag("");
-                  setExcludeVendor(""); setExcludeTag("");
-                }}>
-                  Azzera filtri
-                </Button>
+                <Button size="slim" plain onClick={resetFilters}>Azzera filtri</Button>
               )}
             </InlineStack>
-            <InlineStack gap="200" wrap>
+
+            {/* Riga 1: Cerca + Scorte + Stato + Soglia */}
+            <InlineStack gap="300" wrap blockAlign="start">
               <div style={{ minWidth: 220 }}>
                 <TextField
                   label="Cerca" placeholder="Prodotto / SKU..."
@@ -275,19 +325,7 @@ export default function Inventario() {
                 />
               </div>
               <div style={{ minWidth: 180 }}>
-                <Select label="Brand" options={vendorOptions} value={filterVendor} onChange={setFilterVendor} />
-              </div>
-              <div style={{ minWidth: 180 }}>
-                <Select label="Tipo prodotto" options={typeOptions} value={filterType} onChange={setFilterType} />
-              </div>
-              <div style={{ minWidth: 200 }}>
-                <Select label="Scorte" options={scorteOptions} value={filterScorte} onChange={setFilterScorte} />
-              </div>
-              <div style={{ minWidth: 180 }}>
                 <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
-              </div>
-              <div style={{ minWidth: 180 }}>
-                <Select label="Tag" options={tagOptions} value={filterTag} onChange={setFilterTag} />
               </div>
               <div style={{ minWidth: 120 }}>
                 <TextField
@@ -297,24 +335,60 @@ export default function Inventario() {
                 />
               </div>
             </InlineStack>
-            <InlineStack gap="200" wrap>
-              <div style={{ minWidth: 180 }}>
-                <Select
-                  label="Escludi brand"
-                  options={[{ label: "Nessuna esclusione", value: "" }, ...vendors.map((v) => ({ label: v, value: v }))]}
-                  value={excludeVendor}
-                  onChange={setExcludeVendor}
+
+            {/* Riga 2: Multi-select includi */}
+            <InlineStack gap="300" wrap blockAlign="start">
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Brand"
+                  placeholder="Tutti i brand"
+                  options={vendorOptionList}
+                  selected={filterVendors}
+                  onChange={setFilterVendors}
                 />
               </div>
-              <div style={{ minWidth: 180 }}>
-                <Select
-                  label="Escludi tag"
-                  options={[{ label: "Nessuna esclusione", value: "" }, ...allTags.map((t) => ({ label: t, value: t }))]}
-                  value={excludeTag}
-                  onChange={setExcludeTag}
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Tipo prodotto"
+                  placeholder="Tutti i tipi"
+                  options={typeOptionList}
+                  selected={filterTypes}
+                  onChange={setFilterTypes}
+                />
+              </div>
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Tag (includi)"
+                  placeholder="Tutti i tag"
+                  options={tagOptionList}
+                  selected={filterTags}
+                  onChange={setFilterTags}
                 />
               </div>
             </InlineStack>
+
+            {/* Riga 3: Multi-select escludi */}
+            <InlineStack gap="300" wrap blockAlign="start">
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Escludi brand"
+                  placeholder="Nessuna esclusione"
+                  options={vendorOptionList}
+                  selected={excludeVendors}
+                  onChange={setExcludeVendors}
+                />
+              </div>
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Escludi tag"
+                  placeholder="Nessuna esclusione"
+                  options={tagOptionList}
+                  selected={excludeTags}
+                  onChange={setExcludeTags}
+                />
+              </div>
+            </InlineStack>
+
             {isFiltered && (
               <Text as="p" variant="bodySm" tone="subdued">
                 {filtered.length} varianti su {variants.length} totali
@@ -369,7 +443,17 @@ export default function Inventario() {
                 columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
                 headings={["Brand", "Varianti", "Pezzi totali", "Valore costo", "Valore vendita", "Margine medio"]}
                 rows={brandSummary.map((b) => [
-                  <Button key={b.brand} size="slim" plain onClick={() => setFilterVendor(b.brand === "—" ? "" : b.brand)}>
+                  <Button
+                    key={b.brand}
+                    size="slim"
+                    plain
+                    onClick={() => {
+                      if (b.brand === "—") return;
+                      setFilterVendors((prev) =>
+                        prev.includes(b.brand) ? prev : [...prev, b.brand]
+                      );
+                    }}
+                  >
                     {b.brand}
                   </Button>,
                   b.variants.toString(),
