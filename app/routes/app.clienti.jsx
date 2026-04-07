@@ -1,6 +1,6 @@
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable, TextField,
 } from "@shopify/polaris";
@@ -64,23 +64,39 @@ export const loader = async ({ request }) => {
 function DateRangePicker({ start, end }) {
   const navigate = useNavigate();
   const today = new Date().toISOString().slice(0, 10);
+  const [cs, setCs] = useState(start);
+  const [ce, setCe] = useState(end);
+  useEffect(() => setCs(start), [start]);
+  useEffect(() => setCe(end), [end]);
   const presets = [
     { label: "30 giorni", start: daysAgo(30), end: today },
     { label: "90 giorni", start: daysAgo(90), end: today },
     { label: "Anno", start: `${new Date().getFullYear()}-01-01`, end: today },
   ];
   return (
-    <InlineStack gap="200" blockAlign="center" wrap>
-      <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
-      {presets.map((p) => (
-        <Button key={p.label} size="slim"
-          variant={start === p.start && end === p.end ? "primary" : "plain"}
-          onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
-          {p.label}
-        </Button>
-      ))}
-      <Text as="span" variant="bodySm" tone="subdued">{formatDate(start)} — {formatDate(end)}</Text>
-    </InlineStack>
+    <BlockStack gap="200">
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
+        {presets.map((p) => (
+          <Button key={p.label} size="slim"
+            variant={start === p.start && end === p.end ? "primary" : "plain"}
+            onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
+            {p.label}
+          </Button>
+        ))}
+      </InlineStack>
+      <InlineStack gap="200" blockAlign="end" wrap>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Dal" type="date" value={cs} onChange={setCs} autoComplete="off" />
+        </div>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Al" type="date" value={ce} onChange={setCe} autoComplete="off" />
+        </div>
+        <div style={{ paddingTop: 22 }}>
+          <Button onClick={() => navigate(`?start=${cs}&end=${ce}`)}>Applica</Button>
+        </div>
+      </InlineStack>
+    </BlockStack>
   );
 }
 
@@ -115,7 +131,39 @@ export default function Clienti() {
     return true;
   }), [customers, search, minOrders]);
 
-  const topByOrders = [...customers].sort((a, b) => parseInt(b.numberOfOrders) - parseInt(a.numberOfOrders)).slice(0, 1)[0];
+  // RFM segmentation
+  const today = new Date();
+  const rfmSegments = useMemo(() => {
+    const avgSpent = customers.length > 0
+      ? customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0) / customers.length
+      : 0;
+    return customers.map((c) => {
+      const lastOrderDate = c.lastOrder?.createdAt ? new Date(c.lastOrder.createdAt) : null;
+      const daysSinceLast = lastOrderDate ? Math.floor((today - lastOrderDate) / 86400000) : 9999;
+      const freq = parseInt(c.numberOfOrders) || 0;
+      const monetary = parseFloat(c.amountSpent?.amount || 0);
+      let segment;
+      if (daysSinceLast <= 30 && freq >= 3 && monetary >= avgSpent) segment = "Champions";
+      else if (daysSinceLast <= 60 && freq >= 2) segment = "Abituali";
+      else if (daysSinceLast <= 30 && freq === 1) segment = "Nuovi";
+      else if (daysSinceLast > 90 && freq >= 2) segment = "A rischio";
+      else if (daysSinceLast > 180) segment = "Persi";
+      else segment = "Occasionali";
+      return { ...c, segment, daysSinceLast };
+    });
+  }, [customers]);
+
+  const segmentCounts = useMemo(() => {
+    const map = {};
+    for (const c of rfmSegments) map[c.segment] = (map[c.segment] || 0) + 1;
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [rfmSegments]);
+
+  const atRisk = useMemo(() =>
+    rfmSegments.filter((c) => c.segment === "A rischio" || c.segment === "Persi")
+      .sort((a, b) => b.daysSinceLast - a.daysSinceLast)
+      .slice(0, 10)
+  , [rfmSegments]);
 
   const tableRows = filtered.slice(0, 200).map((c) => [
     `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
@@ -175,6 +223,78 @@ export default function Clienti() {
             </BlockStack></Card>
           </Layout.Section>
         </Layout>
+
+        {/* Segmentazione RFM */}
+        <Layout>
+          <Layout.Section variant="oneThird">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Segmentazione clienti (RFM)</Text>
+                {segmentCounts.map(([seg, count]) => {
+                  const colors = {
+                    Champions: "#008060", Abituali: "#1E90FF", Nuovi: "#2ECC71",
+                    Occasionali: "#FFB400", "A rischio": "#FF4D4D", Persi: "#888",
+                  };
+                  return (
+                    <InlineStack key={seg} align="space-between" blockAlign="center">
+                      <InlineStack gap="200" blockAlign="center">
+                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: colors[seg] || "#ccc", flexShrink: 0 }} />
+                        <Text as="span" variant="bodySm">{seg}</Text>
+                      </InlineStack>
+                      <Badge tone={seg === "Champions" ? "success" : seg === "A rischio" || seg === "Persi" ? "critical" : "info"}>
+                        {count}
+                      </Badge>
+                    </InlineStack>
+                  );
+                })}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Champions: attivi ≤30gg, ≥3 ordini, spesa alta. A rischio: inattivi &gt;90gg con ≥2 ordini.
+                </Text>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          <Layout.Section variant="twoThirds">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Top 5 clienti per spesa</Text>
+                <DataTable
+                  columnContentTypes={["text","text","numeric","numeric"]}
+                  headings={["Nome","Email","Ordini","Spesa totale"]}
+                  rows={topCustomers.map((c) => [
+                    `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
+                    c.email || "—",
+                    c.numberOfOrders.toString(),
+                    formatCurrency(parseFloat(c.amountSpent?.amount || 0), c.amountSpent?.currencyCode),
+                  ])}
+                />
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+        {/* Clienti a rischio */}
+        {atRisk.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">Clienti a rischio / persi</Text>
+                <Badge tone="critical">{atRisk.length} clienti</Badge>
+              </InlineStack>
+              <DataTable
+                columnContentTypes={["text","text","numeric","numeric","text"]}
+                headings={["Nome","Email","Ordini","Spesa totale","Ultimo ordine"]}
+                rows={atRisk.map((c) => [
+                  `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—",
+                  c.email || "—",
+                  c.numberOfOrders.toString(),
+                  formatCurrency(parseFloat(c.amountSpent?.amount || 0), c.amountSpent?.currencyCode),
+                  c.lastOrder ? `${formatDate(c.lastOrder.createdAt)} (${c.daysSinceLast}gg fa)` : "Mai",
+                ])}
+              />
+            </BlockStack>
+          </Card>
+        )}
 
         {/* Grafici */}
         <Layout>

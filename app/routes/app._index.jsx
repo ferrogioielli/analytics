@@ -1,7 +1,8 @@
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
+import { useState, useEffect } from "react";
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge, Box,
+  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge, Box, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -63,6 +64,11 @@ function KpiCard({ title, value, delta }) {
 function DateRangePicker({ start, end }) {
   const navigate = useNavigate();
   const today = new Date().toISOString().slice(0, 10);
+  const [cs, setCs] = useState(start);
+  const [ce, setCe] = useState(end);
+  useEffect(() => setCs(start), [start]);
+  useEffect(() => setCe(end), [end]);
+
   const presets = [
     { label: "Oggi", start: today, end: today },
     { label: "7 giorni", start: daysAgo(7), end: today },
@@ -72,22 +78,29 @@ function DateRangePicker({ start, end }) {
   ];
 
   return (
-    <InlineStack gap="200" blockAlign="center" wrap>
-      <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
-      {presets.map((p) => (
-        <Button
-          key={p.label}
-          size="slim"
-          variant={start === p.start && end === p.end ? "primary" : "plain"}
-          onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}
-        >
-          {p.label}
-        </Button>
-      ))}
-      <Text as="span" variant="bodySm" tone="subdued">
-        {formatDate(start)} — {formatDate(end)}
-      </Text>
-    </InlineStack>
+    <BlockStack gap="200">
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
+        {presets.map((p) => (
+          <Button key={p.label} size="slim"
+            variant={start === p.start && end === p.end ? "primary" : "plain"}
+            onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
+            {p.label}
+          </Button>
+        ))}
+      </InlineStack>
+      <InlineStack gap="200" blockAlign="end" wrap>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Dal" type="date" value={cs} onChange={setCs} autoComplete="off" />
+        </div>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Al" type="date" value={ce} onChange={setCe} autoComplete="off" />
+        </div>
+        <div style={{ paddingTop: 22 }}>
+          <Button onClick={() => navigate(`?start=${cs}&end=${ce}`)}>Applica</Button>
+        </div>
+      </InlineStack>
+    </BlockStack>
   );
 }
 

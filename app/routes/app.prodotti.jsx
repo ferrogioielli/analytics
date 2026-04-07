@@ -1,9 +1,9 @@
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, Thumbnail,
+  DataTable, Select, Thumbnail, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -67,18 +67,59 @@ function exportExcel(rows, filename) {
   });
 }
 
+function DateRangePicker({ start, end }) {
+  const navigate = useNavigate();
+  const today = new Date().toISOString().slice(0, 10);
+  const [cs, setCs] = useState(start);
+  const [ce, setCe] = useState(end);
+  useEffect(() => setCs(start), [start]);
+  useEffect(() => setCe(end), [end]);
+  const presets = [
+    { label: "30 giorni", start: daysAgo(30), end: today },
+    { label: "90 giorni", start: daysAgo(90), end: today },
+    { label: "Anno", start: `${new Date().getFullYear()}-01-01`, end: today },
+  ];
+  return (
+    <BlockStack gap="200">
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Text as="span" variant="bodySm" tone="subdued">Vendite nel periodo:</Text>
+        {presets.map((p) => (
+          <Button key={p.label} size="slim"
+            variant={start === p.start && end === p.end ? "primary" : "plain"}
+            onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
+            {p.label}
+          </Button>
+        ))}
+      </InlineStack>
+      <InlineStack gap="200" blockAlign="end" wrap>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Dal" type="date" value={cs} onChange={setCs} autoComplete="off" />
+        </div>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Al" type="date" value={ce} onChange={setCe} autoComplete="off" />
+        </div>
+        <div style={{ paddingTop: 22 }}>
+          <Button onClick={() => navigate(`?start=${cs}&end=${ce}`)}>Applica</Button>
+        </div>
+      </InlineStack>
+    </BlockStack>
+  );
+}
+
 export default function Prodotti() {
   const { products, topByRevenue, topByUnits, byBrand, vendors, types, start, end } = useLoaderData();
   const [filterVendor, setFilterVendor] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => products.filter((p) => {
+    if (search && !p.title.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterVendor && p.vendor !== filterVendor) return false;
     if (filterType && p.productType !== filterType) return false;
     if (filterStatus && p.status !== filterStatus) return false;
     return true;
-  }), [products, filterVendor, filterType, filterStatus]);
+  }), [products, search, filterVendor, filterType, filterStatus]);
 
   const totalInventory = products.reduce((s, p) => s + (p.totalInventory || 0), 0);
   const activeProducts = products.filter((p) => p.status === "ACTIVE").length;
@@ -135,10 +176,8 @@ export default function Prodotti() {
     <Page title="Prodotti">
       <TitleBar title="Prodotti" />
       <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="center" wrap>
-          <InlineStack gap="200">
-            <Text as="span" variant="bodySm" tone="subdued">Vendite: {start} — {end}</Text>
-          </InlineStack>
+        <InlineStack align="space-between" blockAlign="start" wrap>
+          <DateRangePicker start={start} end={end} />
           <InlineStack gap="200">
             <Button size="slim" onClick={() => exportCSV(exportRows, `prodotti_${start}_${end}.csv`)}>CSV</Button>
             <Button size="slim" onClick={() => exportExcel(exportRows, `prodotti_${start}_${end}.xlsx`)}>Excel</Button>
@@ -251,6 +290,9 @@ export default function Prodotti() {
                 <InlineStack align="space-between" blockAlign="center" wrap>
                   <Text as="h2" variant="headingMd">Tutti i prodotti ({filtered.length})</Text>
                   <InlineStack gap="200" wrap>
+                    <div style={{ minWidth: 180 }}>
+                      <TextField label="" labelHidden placeholder="Cerca prodotto..." value={search} onChange={setSearch} autoComplete="off" />
+                    </div>
                     <div style={{ minWidth: 150 }}>
                       <Select label="" labelHidden options={vendorOptions} value={filterVendor} onChange={setFilterVendor} />
                     </div>

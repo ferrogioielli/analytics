@@ -1,9 +1,9 @@
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, Modal,
+  DataTable, Select, Modal, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -34,6 +34,10 @@ export const loader = async ({ request }) => {
 function DateRangePicker({ start, end }) {
   const navigate = useNavigate();
   const today = new Date().toISOString().slice(0, 10);
+  const [cs, setCs] = useState(start);
+  const [ce, setCe] = useState(end);
+  useEffect(() => setCs(start), [start]);
+  useEffect(() => setCe(end), [end]);
   const presets = [
     { label: "7 giorni", start: daysAgo(7), end: today },
     { label: "30 giorni", start: daysAgo(30), end: today },
@@ -41,18 +45,51 @@ function DateRangePicker({ start, end }) {
     { label: "Anno", start: `${new Date().getFullYear()}-01-01`, end: today },
   ];
   return (
-    <InlineStack gap="200" blockAlign="center" wrap>
-      <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
-      {presets.map((p) => (
-        <Button key={p.label} size="slim"
-          variant={start === p.start && end === p.end ? "primary" : "plain"}
-          onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
-          {p.label}
-        </Button>
-      ))}
-      <Text as="span" variant="bodySm" tone="subdued">{formatDate(start)} — {formatDate(end)}</Text>
-    </InlineStack>
+    <BlockStack gap="200">
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Text as="span" variant="bodySm" tone="subdued">Periodo:</Text>
+        {presets.map((p) => (
+          <Button key={p.label} size="slim"
+            variant={start === p.start && end === p.end ? "primary" : "plain"}
+            onClick={() => navigate(`?start=${p.start}&end=${p.end}`)}>
+            {p.label}
+          </Button>
+        ))}
+      </InlineStack>
+      <InlineStack gap="200" blockAlign="end" wrap>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Dal" type="date" value={cs} onChange={setCs} autoComplete="off" />
+        </div>
+        <div style={{ minWidth: 150 }}>
+          <TextField label="Al" type="date" value={ce} onChange={setCe} autoComplete="off" />
+        </div>
+        <div style={{ paddingTop: 22 }}>
+          <Button onClick={() => navigate(`?start=${cs}&end=${ce}`)}>Applica</Button>
+        </div>
+      </InlineStack>
+    </BlockStack>
   );
+}
+
+function groupByPeriod(byDay, period) {
+  if (period === "day") return byDay;
+  const map = new Map();
+  for (const d of byDay) {
+    let key;
+    if (period === "week") {
+      const date = new Date(d.date);
+      const jan1 = new Date(date.getFullYear(), 0, 1);
+      const week = Math.ceil(((date - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+      key = `${date.getFullYear()}-S${String(week).padStart(2, "0")}`;
+    } else {
+      key = d.date.slice(0, 7);
+    }
+    if (!map.has(key)) map.set(key, { date: key, revenue: 0, orders: 0 });
+    const entry = map.get(key);
+    entry.revenue += d.revenue;
+    entry.orders += d.orders;
+  }
+  return Array.from(map.values());
 }
 
 function RevenueTooltip({ active, payload, label, currency }) {
@@ -92,10 +129,13 @@ export default function Vendite() {
   const { orders, kpi, byDay, start, end, currency } = useLoaderData();
   const [filterStatus, setFilterStatus] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [groupBy, setGroupBy] = useState("day");
 
   const filtered = filterStatus
     ? orders.filter((o) => o.financialStatus === filterStatus)
     : orders;
+
+  const chartData = useMemo(() => groupByPeriod(byDay, groupBy), [byDay, groupBy]);
 
   const maxOrder = orders.length > 0
     ? Math.max(...orders.map((o) => parseFloat(o.totalPriceSet.shopMoney.amount)))
@@ -182,12 +222,23 @@ export default function Vendite() {
         {/* Grafico fatturato */}
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Fatturato nel periodo</Text>
-            {byDay.length === 0 ? (
+            <InlineStack align="space-between" blockAlign="center" wrap>
+              <Text as="h2" variant="headingMd">Fatturato nel periodo</Text>
+              <InlineStack gap="100">
+                {["day", "week", "month"].map((g) => (
+                  <Button key={g} size="slim"
+                    variant={groupBy === g ? "primary" : "plain"}
+                    onClick={() => setGroupBy(g)}>
+                    {g === "day" ? "Giorno" : g === "week" ? "Settimana" : "Mese"}
+                  </Button>
+                ))}
+              </InlineStack>
+            </InlineStack>
+            {chartData.length === 0 ? (
               <Text as="p" tone="subdued">Nessun ordine nel periodo.</Text>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={byDay} margin={{ top: 5, right: 40, left: 10, bottom: 0 }}>
+                <AreaChart data={chartData} margin={{ top: 5, right: 40, left: 10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorRev2" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#008060" stopOpacity={0.3} />
