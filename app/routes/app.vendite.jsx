@@ -44,7 +44,17 @@ export const loader = async ({ request }) => {
   const yoyRevenue = yoyOrders.reduce((s, o) => s + parseFloat(o.totalPriceSet.shopMoney.amount), 0);
   const yoyDelta = yoyRevenue > 0 ? ((kpi.revenue - yoyRevenue) / yoyRevenue) * 100 : null;
 
-  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta });
+  // Canali di vendita presenti negli ordini del periodo
+  const channelSet = new Map();
+  for (const o of orders) {
+    const ch = o.channelInformation;
+    const name = ch?.channelDefinition?.channelName || ch?.app?.title || "Sconosciuto";
+    const handle = ch?.channelDefinition?.handle || ch?.app?.title || "unknown";
+    if (!channelSet.has(handle)) channelSet.set(handle, name);
+  }
+  const channels = Array.from(channelSet.entries()).map(([handle, name]) => ({ handle, name }));
+
+  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels });
 };
 
 function DateRangePicker({ start, end }) {
@@ -142,14 +152,21 @@ function exportExcel(rows, filename) {
 }
 
 export default function Vendite() {
-  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta } = useLoaderData();
+  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels } = useLoaderData();
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterChannel, setFilterChannel] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [groupBy, setGroupBy] = useState("day");
 
-  const filtered = filterStatus
-    ? orders.filter((o) => o.financialStatus === filterStatus)
-    : orders;
+  const filtered = orders.filter((o) => {
+    if (filterStatus && o.financialStatus !== filterStatus) return false;
+    if (filterChannel) {
+      const ch = o.channelInformation;
+      const handle = ch?.channelDefinition?.handle || ch?.app?.title || "unknown";
+      if (handle !== filterChannel) return false;
+    }
+    return true;
+  });
 
   const chartData = useMemo(() => groupByPeriod(byDay, groupBy), [byDay, groupBy]);
 
@@ -168,6 +185,11 @@ export default function Vendite() {
     { label: "Rimborsato", value: "REFUNDED" },
     { label: "Parz. rimborsato", value: "PARTIALLY_REFUNDED" },
     { label: "Autorizzato", value: "AUTHORIZED" },
+  ];
+
+  const channelOptions = [
+    { label: "Tutti i canali", value: "" },
+    ...channels.map((c) => ({ label: c.name, value: c.handle })),
   ];
 
   const tableRows = filtered.map((o) => [
@@ -295,9 +317,16 @@ export default function Vendite() {
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
               <Text as="h2" variant="headingMd">Ordini ({filtered.length})</Text>
-              <div style={{ minWidth: 200 }}>
-                <Select label="" labelHidden options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
-              </div>
+              <InlineStack gap="200">
+                {channels.length > 1 && (
+                  <div style={{ minWidth: 180 }}>
+                    <Select label="" labelHidden options={channelOptions} value={filterChannel} onChange={setFilterChannel} />
+                  </div>
+                )}
+                <div style={{ minWidth: 200 }}>
+                  <Select label="" labelHidden options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
+                </div>
+              </InlineStack>
             </InlineStack>
             {tableRows.length === 0 ? (
               <Text as="p" tone="subdued">Nessun ordine trovato.</Text>

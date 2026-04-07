@@ -37,6 +37,13 @@ const ORDER_FIELDS = `
   totalDiscountsSet { shopMoney { amount } }
   totalTaxSet { shopMoney { amount } }
   totalShippingPriceSet { shopMoney { amount } }
+  channelInformation {
+    channelDefinition {
+      channelName
+      handle
+    }
+    app { title }
+  }
   customer {
     id
     firstName
