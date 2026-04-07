@@ -118,8 +118,8 @@ export async function fetchOrders(admin, { startDate, endDate }) {
 
 function buildDateQuery(startDate, endDate) {
   const parts = [];
-  if (startDate) parts.push(`created_at:>='${startDate}'`);
-  if (endDate) parts.push(`created_at:<='${endDate}'`);
+  if (startDate) parts.push(`created_at:>='${startDate}T00:00:00'`);
+  if (endDate) parts.push(`created_at:<='${endDate}T23:59:59'`);
   return parts.join(" AND ") || undefined;
 }
 
