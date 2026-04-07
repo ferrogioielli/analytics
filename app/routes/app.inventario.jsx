@@ -3,7 +3,7 @@ import { json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, TextField, Popover, OptionList, Tag,
+  DataTable, Select, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -94,15 +94,6 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
   const toggle = useCallback(() => setOpen((v) => !v), []);
 
   const isAll = selected.length === allValues.length;
-  const excluded = allValues.filter((v) => !selected.includes(v));
-
-  const labelMap = useMemo(() => {
-    const m = {};
-    for (const o of options) m[o.value] = o.label;
-    return m;
-  }, [options]);
-
-  const reinclude = (val) => onChange([...selected, val]);
 
   return (
     <BlockStack gap="100">
@@ -137,15 +128,6 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
           </div>
         </div>
       </Popover>
-      {excluded.length > 0 && (
-        <InlineStack gap="100" wrap>
-          {excluded.map((val) => (
-            <Tag key={val} onRemove={() => reinclude(val)}>
-              ✕ {labelMap[val] || val}
-            </Tag>
-          ))}
-        </InlineStack>
-      )}
     </BlockStack>
   );
 }
