@@ -244,7 +244,6 @@ export default function Inventario() {
             <Button size="slim" onClick={() => exportCSV(exportRows, "inventario.csv")}>CSV varianti</Button>
             <Button size="slim" onClick={() => exportExcel(exportRows, "inventario.xlsx")}>Excel varianti</Button>
             <Button size="slim" onClick={() => exportCSV(brandExportRows, "inventario_per_brand.csv")}>CSV per brand</Button>
-            <Button size="slim" onClick={() => window.print()}>Stampa / PDF</Button>
           </InlineStack>
         </InlineStack>
 
