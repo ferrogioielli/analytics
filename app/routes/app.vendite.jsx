@@ -166,7 +166,7 @@ export default function Vendite() {
       if (handle !== filterChannel) return false;
     }
     return true;
-  });
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const chartData = useMemo(() => groupByPeriod(byDay, groupBy), [byDay, groupBy]);
 
