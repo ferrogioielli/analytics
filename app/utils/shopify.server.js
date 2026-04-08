@@ -312,6 +312,17 @@ async function runShopifyQL(admin, query) {
   const json = await response.json();
   const result = json.data?.shopifyqlQuery;
 
+  // DEBUG temporaneo — rimuovere dopo verifica
+  console.log("[ShopifyQL]", JSON.stringify({
+    q: query.slice(0, 80),
+    hasErrors: !!json.errors?.length,
+    gqlErrors: json.errors?.map(e => e.message),
+    parseErrors: result?.parseErrors,
+    hasTableData: !!result?.tableData,
+    rowCount: result?.tableData?.rowData?.length ?? 0,
+    cols: result?.tableData?.columns?.map(c => c.name),
+  }));
+
   if (result?.parseErrors?.length) {
     return { rows: [], error: result.parseErrors.map((e) => e.message).join("; ") };
   }
