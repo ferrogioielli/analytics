@@ -189,59 +189,93 @@ function buildDateQuery(startDate, endDate) {
   return parts.join(" ") || undefined;
 }
 
-// Campo ridotto per ricostruzione storica inventario:
-// solo lineItems con variantId e quantità — niente customer, canale, ecc.
-const ORDER_FIELDS_HISTORY = `
-  id
-  lineItems(first: 50) {
-    edges {
-      node {
-        quantity
-        variant { id }
-      }
-    }
-  }
-`;
-
 /**
- * Carica ordini con soli lineItems (variantId + qty) per ricostruire lo stock storico.
- * Formula: stock_al_giorno_X = stock_attuale + pezzi_venduti_tra_X_e_oggi
+ * Recupera il valore del magazzino a una data precisa tramite ShopifyQL.
+ * Usa la stessa fonte dati delle analisi native di Shopify → dati esatti, non stimati.
+ *
+ * Ritorna:
+ *   { total: { units, costValue, retailValue },
+ *     byBrand: [{ brand, units, costValue, retailValue }],
+ *     error: string | null }
  */
-export async function fetchOrdersForHistory(admin, { startDate, endDate }) {
-  const cacheKey = `orders:H:${startDate || ""}:${endDate || ""}`;
+export async function fetchInventorySnapshot(admin, { date }) {
+  const cacheKey = `inv_snapshot:${date}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
 
-  const orders = [];
-  let hasNextPage = true;
-  let cursor = null;
-  const queryFilter = buildDateQuery(startDate, endDate);
+  // Query totale (senza raggruppamento) — WHERE inventory_is_tracked = true come Shopify Analytics
+  const totalQuery = `FROM inventory SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value WHERE inventory_is_tracked = true SINCE ${date} UNTIL ${date}`;
+  // Query per brand
+  const brandQuery  = `FROM inventory SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value WHERE inventory_is_tracked = true GROUP BY vendor_name WITH TOTALS SINCE ${date} UNTIL ${date} ORDER BY ending_inventory_value DESC LIMIT 250`;
 
-  while (hasNextPage) {
-    const variables = { first: 250, query: queryFilter };
-    if (cursor) variables.after = cursor;
-
-    const response = await admin.graphql(
-      `#graphql
-      query getOrdersHistory($first: Int!, $after: String, $query: String) {
-        orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT) {
-          pageInfo { hasNextPage endCursor }
-          edges { node { ${ORDER_FIELDS_HISTORY} } }
+  const [totalResp, brandResp] = await Promise.all([
+    admin.graphql(
+      `mutation shopifyqlQuery($query: String!) {
+        shopifyqlQuery(query: $query) {
+          ... on TableResponse { tableData { rowData columns { name } } }
+          ... on ParseErrorResponse { parseErrors { code message } }
         }
       }`,
-      { variables },
-    );
+      { variables: { query: totalQuery } },
+    ),
+    admin.graphql(
+      `mutation shopifyqlQuery($query: String!) {
+        shopifyqlQuery(query: $query) {
+          ... on TableResponse { tableData { rowData columns { name } } }
+          ... on ParseErrorResponse { parseErrors { code message } }
+        }
+      }`,
+      { variables: { query: brandQuery } },
+    ),
+  ]);
 
-    const json = await response.json();
-    const data = json.data?.orders;
-    if (!data) break;
-    orders.push(...data.edges.map((e) => e.node));
-    hasNextPage = data.pageInfo.hasNextPage;
-    cursor = data.pageInfo.endCursor;
+  const totalJson = await totalResp.json();
+  const brandJson = await brandResp.json();
+
+  const totalSql = totalJson.data?.shopifyqlQuery;
+  const brandSql = brandJson.data?.shopifyqlQuery;
+
+  // Gestione errori di parsing ShopifyQL
+  if (totalSql?.parseErrors) {
+    const result = { error: totalSql.parseErrors.map((e) => e.message).join("; "), total: null, byBrand: [] };
+    cacheSet(cacheKey, result);
+    return result;
   }
 
-  cacheSet(cacheKey, orders);
-  return orders;
+  // Utility: converte rowData in array di oggetti usando i nomi colonna
+  function parseTable(tableData) {
+    if (!tableData?.rowData?.length) return [];
+    const cols = tableData.columns.map((c) => c.name);
+    return tableData.rowData.map((row) =>
+      Object.fromEntries(cols.map((c, i) => [c, row[i]])),
+    );
+  }
+
+  const totalRows = parseTable(totalSql?.tableData);
+  const brandRows = parseTable(brandSql?.tableData);
+
+  // Riga di riepilogo (prima riga della tabella totale)
+  const t = totalRows[0] || {};
+  const total = {
+    units:       parseInt(t.ending_inventory_units   || 0),
+    costValue:   parseFloat(t.ending_inventory_value  || 0),
+    retailValue: parseFloat(t.ending_inventory_retail_value || 0),
+  };
+
+  // Righe per brand — ShopifyQL restituisce anche una riga "Summary"
+  const byBrand = brandRows
+    .filter((r) => r.vendor_name && r.vendor_name !== "Summary")
+    .map((r) => ({
+      brand:       r.vendor_name || "—",
+      units:       parseInt(r.ending_inventory_units   || 0),
+      costValue:   parseFloat(r.ending_inventory_value  || 0),
+      retailValue: parseFloat(r.ending_inventory_retail_value || 0),
+    }))
+    .sort((a, b) => b.costValue - a.costValue);
+
+  const result = { error: null, total, byBrand, date };
+  cacheSet(cacheKey, result);
+  return result;
 }
 
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
