@@ -59,7 +59,27 @@ export const loader = async ({ request }) => {
   const topByRevenue = topProductsByRevenue(orders, 10);
   const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 10);
 
-  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits });
+  // Aggregato per brand (vendor): fatturato, pezzi, numero ordini distinti
+  const brandMap = new Map();
+  for (const order of orders) {
+    const brandsInOrder = new Set();
+    for (const edge of order.lineItems.edges) {
+      const item = edge.node;
+      const vendor = item.variant?.product?.vendor;
+      if (!vendor) continue;
+      brandsInOrder.add(vendor);
+      if (!brandMap.has(vendor)) brandMap.set(vendor, { name: vendor, revenue: 0, units: 0, orders: 0 });
+      const entry = brandMap.get(vendor);
+      entry.revenue += parseFloat(item.originalTotalSet?.shopMoney?.amount || 0);
+      entry.units += item.quantity;
+    }
+    for (const v of brandsInOrder) {
+      brandMap.get(v).orders += 1;
+    }
+  }
+  const brands = Array.from(brandMap.values()).sort((a, b) => b.revenue - a.revenue);
+
+  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands });
 };
 
 function DateRangePicker({ start, end }) {
@@ -157,9 +177,10 @@ function exportExcel(rows, filename) {
 }
 
 export default function Vendite() {
-  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits } = useLoaderData();
+  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands } = useLoaderData();
   const [filterStatus, setFilterStatus] = useState("");
   const [filterChannel, setFilterChannel] = useState("");
+  const [filterBrand, setFilterBrand] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [groupBy, setGroupBy] = useState("day");
 
@@ -169,6 +190,10 @@ export default function Vendite() {
       const ch = o.channelInformation;
       const handle = ch?.channelDefinition?.handle || ch?.app?.title || "unknown";
       if (handle !== filterChannel) return false;
+    }
+    if (filterBrand) {
+      const hasBrand = o.lineItems.edges.some((e) => e.node.variant?.product?.vendor === filterBrand);
+      if (!hasBrand) return false;
     }
     return true;
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -347,6 +372,59 @@ export default function Vendite() {
               </Card>
             </div>
           </div>
+        )}
+
+        {/* Vendite per brand (cliccabile per filtrare la tabella ordini) */}
+        {brands.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center" wrap>
+                <Text as="h2" variant="headingMd">Vendite per brand</Text>
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {brands.length} brand · clicca per filtrare
+                  </Text>
+                  {filterBrand && (
+                    <Button size="slim" onClick={() => setFilterBrand("")}>
+                      Rimuovi filtro: {filterBrand} ✕
+                    </Button>
+                  )}
+                </InlineStack>
+              </InlineStack>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
+                {brands.map((b) => {
+                  const isActive = filterBrand === b.name;
+                  return (
+                    <div
+                      key={b.name}
+                      onClick={() => setFilterBrand(isActive ? "" : b.name)}
+                      style={{
+                        cursor: "pointer",
+                        padding: "10px 12px",
+                        border: isActive ? "2px solid #008060" : "1px solid #e1e3e5",
+                        borderRadius: 8,
+                        background: isActive ? "#f0f9f5" : "#fff",
+                        transition: "border-color 0.15s, background 0.15s",
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>
+                          {b.name}
+                        </span>
+                        <span style={{ fontSize: 12, color: "#008060", fontWeight: 600, flexShrink: 0 }}>
+                          {formatCurrency(b.revenue, currency)}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#6d7175", marginTop: 2 }}>
+                        {b.orders} {b.orders === 1 ? "ordine" : "ordini"} · {b.units} pz
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </BlockStack>
+          </Card>
         )}
 
         {/* Tabella ordini */}
