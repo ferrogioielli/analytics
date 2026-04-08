@@ -27,7 +27,8 @@ export const loader = async ({ request }) => {
 
   const [orders, prevOrders] = await Promise.all([
     fetchOrders(admin, { startDate: start, endDate: end }),
-    fetchOrders(admin, { startDate: prev.start, endDate: prev.end }),
+    // Periodo comparativo: solo totali → skinny query (no lineItems)
+    fetchOrders(admin, { startDate: prev.start, endDate: prev.end, skinny: true }),
   ]);
 
   const kpi = calcKPI(orders, prevOrders);

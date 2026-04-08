@@ -3,6 +3,33 @@
  * Tutte le funzioni usano paginazione cursore per gestire cataloghi grandi.
  */
 
+// ─── CACHE IN-MEMORY ───────────────────────────────────────────────────────────
+// Cache di processo per ridurre le chiamate ripetute a Shopify quando l'utente
+// naviga tra le tab. TTL breve (5 min) per restare reattivi a nuovi ordini.
+// Nota: in serverless multi-istanza la cache è per-istanza, comunque utile.
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minuti
+const _cache = new Map();
+
+function cacheGet(key) {
+  const entry = _cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.t > CACHE_TTL_MS) {
+    _cache.delete(key);
+    return null;
+  }
+  return entry.v;
+}
+
+function cacheSet(key, value) {
+  _cache.set(key, { t: Date.now(), v: value });
+  // Soft cap: evita memory leak se la cache cresce troppo
+  if (_cache.size > 200) {
+    const firstKey = _cache.keys().next().value;
+    _cache.delete(firstKey);
+  }
+}
+
 // ─── ORDINI ────────────────────────────────────────────────────────────────────
 
 const FINANCIAL_STATUS_MAP = {
@@ -26,7 +53,7 @@ const FULFILLMENT_STATUS_MAP = {
   "Open": "OPEN",
 };
 
-const ORDER_FIELDS = `
+const ORDER_FIELDS_FULL = `
   id
   name
   createdAt
@@ -71,15 +98,32 @@ const ORDER_FIELDS = `
   }
 `;
 
+// Variante "skinny" per i fetch comparativi (periodo precedente, anno precedente)
+// dove servono solo totali, conteggi e info cliente — niente lineItems pesanti.
+const ORDER_FIELDS_SKINNY = `
+  id
+  createdAt
+  totalPriceSet { shopMoney { amount currencyCode } }
+  customer { numberOfOrders }
+`;
+
 /**
  * Carica tutti gli ordini in un intervallo di date con paginazione.
+ *
+ * Opzioni:
+ *   - skinny: true → query leggera senza lineItems (per fetch comparativi)
  */
-export async function fetchOrders(admin, { startDate, endDate }) {
+export async function fetchOrders(admin, { startDate, endDate, skinny = false }) {
+  const cacheKey = `orders:${skinny ? "S" : "F"}:${startDate || ""}:${endDate || ""}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
   const orders = [];
   let hasNextPage = true;
   let cursor = null;
 
   const queryFilter = buildDateQuery(startDate, endDate);
+  const fields = skinny ? ORDER_FIELDS_SKINNY : ORDER_FIELDS_FULL;
 
   while (hasNextPage) {
     const variables = { first: 250, query: queryFilter };
@@ -92,7 +136,7 @@ export async function fetchOrders(admin, { startDate, endDate }) {
           pageInfo { hasNextPage endCursor }
           edges {
             node {
-              ${ORDER_FIELDS}
+              ${fields}
             }
           }
         }
@@ -105,14 +149,17 @@ export async function fetchOrders(admin, { startDate, endDate }) {
     if (!data) break;
     orders.push(...data.edges.map((e) => {
       const node = e.node;
-      node.financialStatus = FINANCIAL_STATUS_MAP[node.displayFinancialStatus] || node.displayFinancialStatus || "UNKNOWN";
-      node.fulfillmentStatus = FULFILLMENT_STATUS_MAP[node.displayFulfillmentStatus] || node.displayFulfillmentStatus || null;
+      if (!skinny) {
+        node.financialStatus = FINANCIAL_STATUS_MAP[node.displayFinancialStatus] || node.displayFinancialStatus || "UNKNOWN";
+        node.fulfillmentStatus = FULFILLMENT_STATUS_MAP[node.displayFulfillmentStatus] || node.displayFulfillmentStatus || null;
+      }
       return node;
     }));
     hasNextPage = data.pageInfo.hasNextPage;
     cursor = data.pageInfo.endCursor;
   }
 
+  cacheSet(cacheKey, orders);
   return orders;
 }
 
@@ -154,6 +201,10 @@ const PRODUCT_FIELDS = `
  * Carica tutti i prodotti con varianti e inventario.
  */
 export async function fetchProducts(admin) {
+  const cacheKey = "products:all";
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
   const products = [];
   let hasNextPage = true;
   let cursor = null;
@@ -185,6 +236,7 @@ export async function fetchProducts(admin) {
     cursor = data.pageInfo.endCursor;
   }
 
+  cacheSet(cacheKey, products);
   return products;
 }
 
@@ -206,6 +258,10 @@ const CUSTOMER_FIELDS = `
  * Carica tutti i clienti con statistiche.
  */
 export async function fetchCustomers(admin) {
+  const cacheKey = "customers:all";
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
   const customers = [];
   let hasNextPage = true;
   let cursor = null;
@@ -237,6 +293,7 @@ export async function fetchCustomers(admin) {
     cursor = data.pageInfo.endCursor;
   }
 
+  cacheSet(cacheKey, customers);
   return customers;
 }
 

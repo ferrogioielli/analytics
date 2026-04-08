@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import { authenticate } from "../shopify.server";
 import { fetchOrders, groupOrdersByDay } from "../utils/shopify.server";
-import { formatCurrency, daysAgo } from "../utils/format";
+import { formatCurrency } from "../utils/format";
 
 // ─── Regressione lineare ────────────────────────────────────────────────────
 
@@ -34,13 +34,13 @@ export const loader = async ({ request }) => {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
   const yearStart = `${today.getFullYear()}-01-01`;
-  const start90 = daysAgo(90);
+  // Ultimi 90gg derivati dall'anno corrente (no fetch separato)
+  const start90 = new Date(today);
+  start90.setDate(start90.getDate() - 90);
+  const start90Str = start90.toISOString().slice(0, 10);
 
-  // Ordini anno corrente (per YTD e proiezioni mensili) + ultimi 90gg (per trend)
-  const [yearOrders, orders90] = await Promise.all([
-    fetchOrders(admin, { startDate: yearStart, endDate: todayStr }),
-    fetchOrders(admin, { startDate: start90, endDate: todayStr }),
-  ]);
+  // Ordini anno corrente (servono per YTD, proiezioni, trend e grafico 90gg)
+  const yearOrders = await fetchOrders(admin, { startDate: yearStart, endDate: todayStr });
 
   const currency = yearOrders[0]?.totalPriceSet?.shopMoney?.currencyCode || "EUR";
 
@@ -86,7 +86,7 @@ export const loader = async ({ request }) => {
   }
 
   // Chart data: ultimi 90 giorni + forecast 60 giorni
-  const chartStart = start90;
+  const chartStart = start90Str;
   const chartData = [
     ...allDaysWithMA.filter((d) => d.date >= chartStart).map((d) => ({ ...d, forecast: null })),
     ...forecastDays,
