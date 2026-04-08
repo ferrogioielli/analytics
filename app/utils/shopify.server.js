@@ -164,10 +164,20 @@ export async function fetchOrders(admin, { startDate, endDate, skinny = false })
 }
 
 function buildDateQuery(startDate, endDate) {
+  // Safety: normalizza whitespace e ordina le date se invertite
+  let s = startDate?.trim() || null;
+  let e = endDate?.trim() || null;
+  if (s && e && s > e) [s, e] = [e, s];
+
   const parts = [];
-  if (startDate) parts.push(`created_at:>='${startDate}T00:00:00'`);
-  if (endDate) parts.push(`created_at:<='${endDate}T23:59:59'`);
-  return parts.join(" AND ") || undefined;
+  // Sintassi query Shopify Admin GraphQL: NIENTE apici singoli (quelli sono
+  // ShopifyQL, un DSL diverso). Suffisso Z per marcare il valore come UTC
+  // in modo esplicito così il parser non ambiguisce.
+  // Docs: https://shopify.dev/docs/api/usage/search-syntax
+  if (s) parts.push(`created_at:>=${s}T00:00:00Z`);
+  if (e) parts.push(`created_at:<=${e}T23:59:59Z`);
+  // Shopify usa lo spazio come AND implicito nel query language.
+  return parts.join(" ") || undefined;
 }
 
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
