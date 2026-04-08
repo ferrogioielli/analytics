@@ -194,6 +194,7 @@ function buildDateQuery(startDate, endDate) {
 const PRODUCT_FIELDS = `
   id
   title
+  createdAt
   vendor
   productType
   status
