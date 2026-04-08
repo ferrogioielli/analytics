@@ -1,8 +1,8 @@
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
-  Page, Card, BlockStack, InlineStack, Text, Button, Badge, Banner,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge,
   DataTable, Select, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -10,13 +10,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchProducts, fetchInventorySnapshot } from "../utils/shopify.server";
-import { formatCurrency, daysAgo } from "../utils/format";
+import { fetchProducts, formatCurrency, daysAgo } from "../utils/shopify.server";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const url = new URL(request.url);
-  const snapshot = url.searchParams.get("snapshot") || null;
 
   const products = await fetchProducts(admin);
 
@@ -54,24 +51,7 @@ export const loader = async ({ request }) => {
   const types = [...new Set(variants.map((v) => v.productType).filter(Boolean))].sort();
   const allTags = [...new Set(variants.flatMap((v) => v.tags))].sort();
 
-  // ── SNAPSHOT STORICO via ShopifyQL ──────────────────────────────────────────
-  // Usa la stessa fonte dati di "Analisi ABC prodotti" di Shopify → dati esatti.
-  let snapshotData = null;
-  if (snapshot) {
-    const currentCostValue = variants.reduce((s, v) => s + v.stockValue, 0);
-    const currentSalesValue = variants.reduce((s, v) => s + v.salesValue, 0);
-    const result = await fetchInventorySnapshot(admin, { date: snapshot });
-    snapshotData = {
-      snapshot,
-      error: result.error,
-      total: result.total,
-      byBrand: result.byBrand,
-      currentCostValue,
-      currentSalesValue,
-    };
-  }
-
-  return json({ variants, vendors, types, allTags, snapshotData });
+  return json({ variants, vendors, types, allTags });
 };
 
 function exportCSV(rows, filename) {
@@ -157,8 +137,7 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
 const SORT_KEYS = [null, null, "vendor", "productType", "margin", "qty", "stockValue", "salesValue"];
 
 export default function Inventario() {
-  const { variants, vendors, types, allTags, snapshotData } = useLoaderData();
-  const navigate = useNavigate();
+  const { variants, vendors, types, allTags } = useLoaderData();
 
   const [search, setSearch] = useState("");
   // Partono tutti selezionati — togliere = escludere
@@ -170,9 +149,6 @@ export default function Inventario() {
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [threshold, setThreshold] = useState("5");
-  // Snapshot storico — picker locale (separato dalla navigate)
-  const [snapshotInput, setSnapshotInput] = useState(snapshotData?.snapshot || "");
-  useEffect(() => setSnapshotInput(snapshotData?.snapshot || ""), [snapshotData]);
   const [sortCol, setSortCol] = useState(6);
   const [sortDir, setSortDir] = useState("descending");
   const [page, setPage] = useState(0);
@@ -517,114 +493,6 @@ export default function Inventario() {
                 ])}
               />
             )}
-          </BlockStack>
-        </Card>
-
-        {/* ── VALORE MAGAZZINO STORICO ── */}
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Valore magazzino a data</Text>
-              <Text as="p" variant="bodySm" tone="subdued">Dati ufficiali Shopify Analytics</Text>
-            </InlineStack>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Seleziona una data per vedere il valore esatto del magazzino in quel giorno,
-              usando la stessa fonte dati delle analisi native di Shopify.
-            </Text>
-
-            <InlineStack gap="200" blockAlign="end" wrap>
-              <div style={{ minWidth: 180 }}>
-                <TextField
-                  label="Data snapshot"
-                  type="date"
-                  value={snapshotInput}
-                  onChange={setSnapshotInput}
-                  autoComplete="off"
-                  max={today}
-                />
-              </div>
-              <div style={{ paddingTop: 22 }}>
-                <Button
-                  variant="primary"
-                  onClick={() => navigate(`?snapshot=${snapshotInput}`)}
-                  disabled={!snapshotInput}
-                >
-                  Calcola
-                </Button>
-              </div>
-              {snapshotData && (
-                <div style={{ paddingTop: 22 }}>
-                  <Button size="slim" plain onClick={() => { setSnapshotInput(""); navigate("?"); }}>
-                    ✕ Azzera
-                  </Button>
-                </div>
-              )}
-            </InlineStack>
-
-            {snapshotData && (() => {
-              if (snapshotData.error) {
-                return (
-                  <Banner tone="critical">
-                    <Text as="p" variant="bodySm">
-                      Errore ShopifyQL: {snapshotData.error}
-                    </Text>
-                  </Banner>
-                );
-              }
-              const t = snapshotData.total;
-              if (!t) return null;
-              const deltaCost = t.costValue - snapshotData.currentCostValue;
-              const deltaPct = snapshotData.currentCostValue > 0
-                ? (deltaCost / snapshotData.currentCostValue) * 100
-                : null;
-              return (
-                <BlockStack gap="300">
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                    {[
-                      { label: `Pezzi in stock al ${snapshotData.snapshot}`, value: t.units.toLocaleString("it-IT") },
-                      { label: `Val. costo al ${snapshotData.snapshot}`, value: formatCurrency(t.costValue) },
-                      { label: `Val. vendita al ${snapshotData.snapshot}`, value: formatCurrency(t.retailValue) },
-                      { label: "Val. costo oggi", value: formatCurrency(snapshotData.currentCostValue) },
-                      {
-                        label: "Variazione costo (snapshot → oggi)",
-                        value: formatCurrency(deltaCost),
-                        badge: deltaPct !== null
-                          ? { tone: deltaCost < 0 ? "critical" : "success", text: `${deltaCost > 0 ? "+" : ""}${deltaPct.toFixed(1)}%` }
-                          : null,
-                      },
-                    ].map(({ label, value, badge }) => (
-                      <Card key={label}>
-                        <BlockStack gap="100">
-                          <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-                          <Text as="p" variant="headingMd" fontWeight="bold">{value}</Text>
-                          {badge && <Badge tone={badge.tone}>{badge.text}</Badge>}
-                        </BlockStack>
-                      </Card>
-                    ))}
-                  </div>
-
-                  {snapshotData.byBrand.length > 0 && (
-                    <DataTable
-                      columnContentTypes={["text", "numeric", "numeric", "numeric"]}
-                      headings={["Brand", `Pezzi al ${snapshotData.snapshot}`, "Val. costo", "Val. vendita"]}
-                      rows={snapshotData.byBrand.map((b) => [
-                        b.brand,
-                        b.units.toLocaleString("it-IT"),
-                        b.costValue > 0 ? formatCurrency(b.costValue) : "—",
-                        formatCurrency(b.retailValue),
-                      ])}
-                      totals={[
-                        "",
-                        t.units.toLocaleString("it-IT"),
-                        formatCurrency(t.costValue),
-                        formatCurrency(t.retailValue),
-                      ]}
-                      showTotalsInFooter
-                    />
-                  )}
-                </BlockStack>
-              );
-            })()}
           </BlockStack>
         </Card>
 

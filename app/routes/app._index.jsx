@@ -11,18 +11,29 @@ import {
 } from "recharts";
 import { authenticate } from "../shopify.server";
 import {
-  fetchDashboardByQL,
+  fetchOrders, groupOrdersByDay, calcKPI, topProductsByRevenue,
+  ordersByFinancialStatus,
 } from "../utils/shopify.server";
-import { getDateRange, formatCurrency, formatDate, daysAgo } from "../utils/format";
+import { getDateRange, getPrevPeriod, formatCurrency, formatDate, daysAgo } from "../utils/shopify.server";
 
 // ─── LOADER ────────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const start = url.searchParams.get("start") || daysAgo(30);
-  const end   = url.searchParams.get("end")   || new Date().toISOString().slice(0, 10);
 
-  const { kpi, byDay, topProducts, byStatus } = await fetchDashboardByQL(admin, { start, end });
+  const start = url.searchParams.get("start") || daysAgo(30);
+  const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
+  const prev = getPrevPeriod(start, end);
+
+  const [orders, prevOrders] = await Promise.all([
+    fetchOrders(admin, { startDate: start, endDate: end }),
+    fetchOrders(admin, { startDate: prev.start, endDate: prev.end, skinny: true }),
+  ]);
+
+  const kpi = calcKPI(orders, prevOrders);
+  const byDay = groupOrdersByDay(orders);
+  const topProducts = topProductsByRevenue(orders, 10);
+  const byStatus = ordersByFinancialStatus(orders);
 
   return json({ kpi, byDay, topProducts, byStatus, start, end, currency: kpi.currency });
 };

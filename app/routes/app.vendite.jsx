@@ -10,67 +10,76 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchOrders, fetchVenditeByQL } from "../utils/shopify.server";
-import { formatCurrency, formatDate, formatStatus, daysAgo } from "../utils/format";
+import { fetchOrders, groupOrdersByDay, calcKPI, topProductsByRevenue } from "../utils/shopify.server";
+import { getPrevPeriod, formatCurrency, formatDate, formatStatus, daysAgo } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
   const start = url.searchParams.get("start") || daysAgo(30);
-  const end   = url.searchParams.get("end")   || new Date().toISOString().slice(0, 10);
+  const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
+  const prev = getPrevPeriod(start, end);
 
-  // ShopifyQL per aggregati (nessun limite 60gg) + GraphQL per tabella ordini
-  const [qlData, orders] = await Promise.all([
-    fetchVenditeByQL(admin, { start, end }),
+  // Anno precedente: stesso periodo -1 anno
+  const yoyStart = new Date(start); yoyStart.setFullYear(yoyStart.getFullYear() - 1);
+  const yoyEnd = new Date(end); yoyEnd.setFullYear(yoyEnd.getFullYear() - 1);
+
+  const [orders, prevOrders, yoyOrders] = await Promise.all([
     fetchOrders(admin, { startDate: start, endDate: end }),
+    // Periodi comparativi: solo totali/conteggi → skinny query (no lineItems)
+    fetchOrders(admin, { startDate: prev.start, endDate: prev.end, skinny: true }),
+    fetchOrders(admin, { startDate: yoyStart.toISOString().slice(0, 10), endDate: yoyEnd.toISOString().slice(0, 10), skinny: true }),
   ]);
 
-  // Canali da ordini GraphQL
+  const kpi = calcKPI(orders, prevOrders);
+  const byDay = groupOrdersByDay(orders);
+  const yoyByDay = groupOrdersByDay(yoyOrders);
+
+  // Unisci per posizione (giorno 1 = primo giorno del periodo)
+  const mergedByDay = byDay.map((d, i) => ({
+    ...d,
+    prevRevenue: yoyByDay[i]?.revenue || 0,
+    prevOrders: yoyByDay[i]?.orders || 0,
+  }));
+
+  const yoyRevenue = yoyOrders.reduce((s, o) => s + parseFloat(o.totalPriceSet.shopMoney.amount), 0);
+  const yoyDelta = yoyRevenue > 0 ? ((kpi.revenue - yoyRevenue) / yoyRevenue) * 100 : null;
+
+  // Canali di vendita presenti negli ordini del periodo
   const channelSet = new Map();
   for (const o of orders) {
     const ch = o.channelInformation;
-    const name   = ch?.channelDefinition?.channelName || ch?.app?.title || "Sconosciuto";
-    const handle = ch?.channelDefinition?.handle      || ch?.app?.title || "unknown";
+    const name = ch?.channelDefinition?.channelName || ch?.app?.title || "Sconosciuto";
+    const handle = ch?.channelDefinition?.handle || ch?.app?.title || "unknown";
     if (!channelSet.has(handle)) channelSet.set(handle, name);
   }
   const channels = Array.from(channelSet.entries()).map(([handle, name]) => ({ handle, name }));
 
-  // Ordine massimo da GraphQL
-  const maxOrder = orders.length > 0
-    ? Math.max(...orders.map((o) => parseFloat(o.totalPriceSet?.shopMoney?.amount || 0)))
-    : 0;
+  // Top prodotti per fatturato e per unità
+  const topByRevenue = topProductsByRevenue(orders, 10);
+  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 10);
 
-  // Brands: usa ShopifyQL per revenue/units + GraphQL per conteggio ordini distinti
+  // Aggregato per brand (vendor): fatturato, pezzi, numero ordini distinti
   const brandMap = new Map();
-  for (const b of qlData.qlBrands) {
-    brandMap.set(b.name, { ...b });
-  }
   for (const order of orders) {
     const brandsInOrder = new Set();
     for (const edge of order.lineItems.edges) {
-      const vendor = edge.node.variant?.product?.vendor;
-      if (vendor) brandsInOrder.add(vendor);
+      const item = edge.node;
+      const vendor = item.variant?.product?.vendor;
+      if (!vendor) continue;
+      brandsInOrder.add(vendor);
+      if (!brandMap.has(vendor)) brandMap.set(vendor, { name: vendor, revenue: 0, units: 0, orders: 0 });
+      const entry = brandMap.get(vendor);
+      entry.revenue += parseFloat(item.originalTotalSet?.shopMoney?.amount || 0);
+      entry.units += item.quantity;
     }
     for (const v of brandsInOrder) {
-      if (brandMap.has(v)) brandMap.get(v).orders++;
+      brandMap.get(v).orders += 1;
     }
   }
   const brands = Array.from(brandMap.values()).sort((a, b) => b.revenue - a.revenue);
 
-  return json({
-    orders,
-    kpi:          qlData.kpi,
-    byDay:        qlData.byDay,
-    start, end,
-    currency:     "EUR",
-    yoyRevenue:   qlData.yoyRevenue,
-    yoyDelta:     qlData.yoyDelta,
-    channels,
-    topByRevenue: qlData.topByRevenue,
-    topByUnits:   qlData.topByUnits,
-    brands,
-    maxOrder,
-  });
+  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands });
 };
 
 function DateRangePicker({ start, end }) {
@@ -168,7 +177,7 @@ function exportExcel(rows, filename) {
 }
 
 export default function Vendite() {
-  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands, maxOrder } = useLoaderData();
+  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands } = useLoaderData();
   const [filterStatus, setFilterStatus] = useState("");
   const [filterChannel, setFilterChannel] = useState("");
   const [filterBrand, setFilterBrand] = useState("");
@@ -193,6 +202,9 @@ export default function Vendite() {
 
   const chartData = useMemo(() => groupByPeriod(byDay, groupBy), [byDay, groupBy]);
 
+  const maxOrder = orders.length > 0
+    ? Math.max(...orders.map((o) => parseFloat(o.totalPriceSet?.shopMoney?.amount || 0)))
+    : 0;
   const avgDaily = byDay.length > 0
     ? byDay.reduce((s, d) => s + d.revenue, 0) / byDay.length
     : 0;
