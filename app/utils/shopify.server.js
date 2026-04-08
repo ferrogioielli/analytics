@@ -278,6 +278,215 @@ export async function fetchInventorySnapshot(admin, { date }) {
   return result;
 }
 
+// ─── SHOPIFYQL ─────────────────────────────────────────────────────────────────
+
+/**
+ * Esegue una ShopifyQL query tramite la mutation shopifyqlQuery.
+ * Cache 5 min inclusa. Restituisce { rows, error }.
+ */
+async function runShopifyQL(admin, query) {
+  const cacheKey = `ql:${query.replace(/\s+/g, " ").trim()}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  let response;
+  try {
+    response = await admin.graphql(
+      `#graphql
+      mutation shopifyqlQuery($query: String!) {
+        shopifyqlQuery(query: $query) {
+          ... on TableResponse {
+            tableData { rowData columns { name dataType } }
+          }
+          ... on ParseErrorResponse {
+            parseErrors { code message }
+          }
+        }
+      }`,
+      { variables: { query } },
+    );
+  } catch (err) {
+    return { rows: [], error: String(err.message || err) };
+  }
+
+  const json = await response.json();
+  const result = json.data?.shopifyqlQuery;
+
+  if (result?.parseErrors?.length) {
+    return { rows: [], error: result.parseErrors.map((e) => e.message).join("; ") };
+  }
+
+  const tableData = result?.tableData;
+  if (!tableData?.rowData?.length) return { rows: [], error: null };
+
+  const cols = tableData.columns.map((c) => c.name);
+  const rows = tableData.rowData.map((row) =>
+    Object.fromEntries(cols.map((c, i) => [c, row[i]])),
+  );
+
+  const out = { rows, error: null };
+  cacheSet(cacheKey, out);
+  return out;
+}
+
+/** Helper: legge un valore numerico dalla prima riga di un risultato ShopifyQL */
+function qlNum(result, field) {
+  if (result.error || !result.rows.length) return 0;
+  const v = result.rows[0]?.[field];
+  return v === null || v === undefined ? 0 : parseFloat(v) || 0;
+}
+
+/**
+ * Recupera tutti i dati per la Dashboard tramite ShopifyQL.
+ * Nessun limite 60 giorni. Sostituisce fetchOrders+calcKPI+groupOrdersByDay+topProductsByRevenue+ordersByFinancialStatus.
+ */
+export async function fetchDashboardByQL(admin, { start, end }) {
+  const prev = getPrevPeriod(start, end);
+
+  const [
+    currTotals, prevTotals,
+    custData,
+    byDayData,
+    topProductsData,
+    byStatusData,
+  ] = await Promise.all([
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders SINCE ${start} UNTIL ${end}`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders SINCE ${prev.start} UNTIL ${prev.end}`),
+    runShopifyQL(admin, `FROM sales SHOW customers WHERE new_or_returning_customer IS NOT NULL GROUP BY new_or_returning_customer SINCE ${start} UNTIL ${end} ORDER BY new_or_returning_customer ASC LIMIT 10`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders TIMESERIES day SINCE ${start} UNTIL ${end} ORDER BY day ASC LIMIT 1000`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, net_items_sold WHERE product_title IS NOT NULL GROUP BY product_title, product_vendor SINCE ${start} UNTIL ${end} ORDER BY total_sales DESC LIMIT 10`),
+    runShopifyQL(admin, `FROM sales SHOW orders WHERE billing_financial_status IS NOT NULL GROUP BY billing_financial_status SINCE ${start} UNTIL ${end} ORDER BY orders DESC LIMIT 20`),
+  ]);
+
+  // Periodo precedente per nuovi clienti
+  const prevCustData = await runShopifyQL(admin,
+    `FROM sales SHOW customers WHERE new_or_returning_customer IS NOT NULL GROUP BY new_or_returning_customer SINCE ${prev.start} UNTIL ${prev.end} ORDER BY new_or_returning_customer ASC LIMIT 10`
+  );
+
+  const revenue = qlNum(currTotals, "total_sales");
+  const count   = Math.round(qlNum(currTotals, "orders"));
+  const aov     = count > 0 ? revenue / count : 0;
+
+  const prevRevenue = qlNum(prevTotals, "total_sales");
+  const prevCount   = Math.round(qlNum(prevTotals, "orders"));
+  const prevAov     = prevCount > 0 ? prevRevenue / prevCount : 0;
+
+  // Nuovi clienti: cerca riga con new_or_returning_customer = 'new' (EN) o 'Nuovo' (IT)
+  const getNewCust = (rows) => {
+    const row = rows.find((r) =>
+      r.new_or_returning_customer?.toLowerCase() === "new" ||
+      r.new_or_returning_customer === "Nuovo"
+    );
+    return row ? Math.round(parseFloat(row.customers || 0)) : 0;
+  };
+  const newCustomers = getNewCust(custData.rows || []);
+  const prevNew      = getNewCust(prevCustData.rows || []);
+
+  const delta = (c, p) => (p > 0 ? ((c - p) / p) * 100 : null);
+  const kpi = {
+    revenue, count, aov, newCustomers,
+    revenueDelta: delta(revenue, prevRevenue),
+    countDelta:   delta(count, prevCount),
+    aovDelta:     delta(aov, prevAov),
+    newDelta:     delta(newCustomers, prevNew),
+    currency: "EUR",
+  };
+
+  const byDay = (byDayData.rows || [])
+    .map((r) => ({ date: String(r.day || "").slice(0, 10), revenue: parseFloat(r.total_sales || 0), orders: Math.round(parseFloat(r.orders || 0)) }))
+    .filter((d) => d.date);
+
+  const topProducts = (topProductsData.rows || []).map((r) => ({
+    id: r.product_title,
+    title: r.product_title || "",
+    vendor: r.product_vendor || "",
+    revenue: parseFloat(r.total_sales || 0),
+    units:   Math.round(parseFloat(r.net_items_sold || 0)),
+  }));
+
+  const FINANCIAL_STATUS_IT = {
+    paid: "Pagato", pending: "In attesa", refunded: "Rimborsato",
+    partially_refunded: "Parz. rimborsato", authorized: "Autorizzato",
+    voided: "Annullato", partially_paid: "Parz. pagato",
+  };
+  const byStatus = (byStatusData.rows || [])
+    .filter((r) => r.billing_financial_status)
+    .map((r) => ({
+      name: FINANCIAL_STATUS_IT[r.billing_financial_status?.toLowerCase()] || r.billing_financial_status,
+      value: Math.round(parseFloat(r.orders || 0)),
+    }));
+
+  return { kpi, byDay, topProducts, byStatus };
+}
+
+/**
+ * Recupera i dati aggregati per la tab Vendite tramite ShopifyQL.
+ * Restituisce kpi, byDay (con anno precedente), topByRevenue, topByUnits, brands, yoyRevenue, yoyDelta.
+ */
+export async function fetchVenditeByQL(admin, { start, end }) {
+  const yoyStart = new Date(start); yoyStart.setFullYear(yoyStart.getFullYear() - 1);
+  const yoyEnd   = new Date(end);   yoyEnd.setFullYear(yoyEnd.getFullYear() - 1);
+  const yoyS = yoyStart.toISOString().slice(0, 10);
+  const yoyE = yoyEnd.toISOString().slice(0, 10);
+
+  const [
+    currTotals,
+    yoyTotals,
+    byDayData,
+    yoyByDayData,
+    topProductsData,
+    brandsData,
+  ] = await Promise.all([
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders SINCE ${start} UNTIL ${end}`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders SINCE ${yoyS} UNTIL ${yoyE}`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders TIMESERIES day SINCE ${start} UNTIL ${end} ORDER BY day ASC LIMIT 1000`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, orders TIMESERIES day SINCE ${yoyS} UNTIL ${yoyE} ORDER BY day ASC LIMIT 1000`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, net_items_sold WHERE product_title IS NOT NULL GROUP BY product_title, product_vendor SINCE ${start} UNTIL ${end} ORDER BY total_sales DESC LIMIT 10`),
+    runShopifyQL(admin, `FROM sales SHOW total_sales, net_items_sold WHERE product_vendor IS NOT NULL GROUP BY product_vendor SINCE ${start} UNTIL ${end} ORDER BY total_sales DESC LIMIT 100`),
+  ]);
+
+  const revenue = qlNum(currTotals, "total_sales");
+  const count   = Math.round(qlNum(currTotals, "orders"));
+  const aov     = count > 0 ? revenue / count : 0;
+
+  const yoyRevenue = qlNum(yoyTotals, "total_sales");
+  const yoyDelta   = yoyRevenue > 0 ? ((revenue - yoyRevenue) / yoyRevenue) * 100 : null;
+
+  const kpi = { revenue, count, aov, currency: "EUR" };
+
+  const byDayCurr = (byDayData.rows || [])
+    .map((r) => ({ date: String(r.day || "").slice(0, 10), revenue: parseFloat(r.total_sales || 0), orders: Math.round(parseFloat(r.orders || 0)) }))
+    .filter((d) => d.date);
+
+  const byDayYoy = (yoyByDayData.rows || [])
+    .map((r) => ({ revenue: parseFloat(r.total_sales || 0), orders: Math.round(parseFloat(r.orders || 0)) }));
+
+  const byDay = byDayCurr.map((d, i) => ({
+    ...d,
+    prevRevenue: byDayYoy[i]?.revenue || 0,
+    prevOrders:  byDayYoy[i]?.orders  || 0,
+  }));
+
+  const topByRevenue = (topProductsData.rows || []).map((r) => ({
+    id:      r.product_title,
+    title:   r.product_title || "",
+    vendor:  r.product_vendor || "",
+    revenue: parseFloat(r.total_sales || 0),
+    units:   Math.round(parseFloat(r.net_items_sold || 0)),
+  }));
+  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units);
+
+  // Brands: revenue + units da ShopifyQL; orders verrà aggiunto lato loader da GraphQL
+  const qlBrands = (brandsData.rows || []).map((r) => ({
+    name:    r.product_vendor || "",
+    revenue: parseFloat(r.total_sales || 0),
+    units:   Math.round(parseFloat(r.net_items_sold || 0)),
+    orders:  0, // sovrascritto nel loader da GraphQL se disponibile
+  }));
+
+  return { kpi, byDay, topByRevenue, topByUnits, qlBrands, yoyRevenue, yoyDelta };
+}
+
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
 
 const PRODUCT_FIELDS = `
