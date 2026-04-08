@@ -55,8 +55,8 @@ export const loader = async ({ request }) => {
   const channels = Array.from(channelSet.entries()).map(([handle, name]) => ({ handle, name }));
 
   // Top prodotti per fatturato e per unità
-  const topByRevenue = topProductsByRevenue(orders, 15);
-  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 15);
+  const topByRevenue = topProductsByRevenue(orders, 10);
+  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 10);
 
   return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits });
 };
@@ -308,39 +308,43 @@ export default function Vendite() {
 
         {/* Top prodotti */}
         {topByRevenue.length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top prodotti per fatturato</Text>
-                <BlockStack gap="100">
-                  {topByRevenue.map((p, i) => (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                        <span style={{ fontSize: 12, color: "#6d7175", fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
-                        <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Top prodotti per fatturato</Text>
+                  <BlockStack gap="100">
+                    {topByRevenue.map((p, i) => (
+                      <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
+                          <span style={{ fontSize: 12, color: "#6d7175", fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
+                          <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.title}</span>
+                        </div>
+                        <span style={{ fontSize: 12, color: "#6d7175", flexShrink: 0 }}>{formatCurrency(p.revenue, currency)}</span>
                       </div>
-                      <span style={{ fontSize: 12, color: "#6d7175", flexShrink: 0 }}>{formatCurrency(p.revenue, currency)}</span>
-                    </div>
-                  ))}
+                    ))}
+                  </BlockStack>
                 </BlockStack>
-              </BlockStack>
-            </Card>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top prodotti per unità vendute</Text>
-                <BlockStack gap="100">
-                  {topByUnits.map((p, i) => (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                        <span style={{ fontSize: 12, color: "#6d7175", fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
-                        <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+              </Card>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Top prodotti per unità vendute</Text>
+                  <BlockStack gap="100">
+                    {topByUnits.map((p, i) => (
+                      <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
+                          <span style={{ fontSize: 12, color: "#6d7175", fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
+                          <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{p.title}</span>
+                        </div>
+                        <span style={{ fontSize: 12, color: "#6d7175", flexShrink: 0 }}>{p.units} pz</span>
                       </div>
-                      <span style={{ fontSize: 12, color: "#6d7175", flexShrink: 0 }}>{p.units} pz</span>
-                    </div>
-                  ))}
+                    ))}
+                  </BlockStack>
                 </BlockStack>
-              </BlockStack>
-            </Card>
+              </Card>
+            </div>
           </div>
         )}
 
