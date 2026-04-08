@@ -170,12 +170,21 @@ function buildDateQuery(startDate, endDate) {
   if (s && e && s > e) [s, e] = [e, s];
 
   const parts = [];
-  // Sintassi query Shopify Admin GraphQL: NIENTE apici singoli (quelli sono
-  // ShopifyQL, un DSL diverso). Suffisso Z per marcare il valore come UTC
-  // in modo esplicito così il parser non ambiguisce.
+  // Formato canonico dalla documentazione Shopify Admin GraphQL:
+  // solo data, niente orario, niente timezone, niente apici.
+  // Esempio dai docs: `created_at:>2019-12-01`
   // Docs: https://shopify.dev/docs/api/usage/search-syntax
-  if (s) parts.push(`created_at:>=${s}T00:00:00Z`);
-  if (e) parts.push(`created_at:<=${e}T23:59:59Z`);
+  if (s) parts.push(`created_at:>=${s}`);
+  if (e) {
+    // Per includere l'INTERO giorno finale usiamo strict-less-than sul
+    // giorno successivo, altrimenti `<=${e}` senza orario verrebbe
+    // interpretato come mezzanotte di quel giorno, escludendo gli ordini
+    // del pomeriggio/sera dell'ultimo giorno selezionato.
+    const next = new Date(`${e}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const nextStr = next.toISOString().slice(0, 10);
+    parts.push(`created_at:<${nextStr}`);
+  }
   // Shopify usa lo spazio come AND implicito nel query language.
   return parts.join(" ") || undefined;
 }
