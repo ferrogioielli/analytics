@@ -189,6 +189,61 @@ function buildDateQuery(startDate, endDate) {
   return parts.join(" ") || undefined;
 }
 
+// Campo ridotto per ricostruzione storica inventario:
+// solo lineItems con variantId e quantità — niente customer, canale, ecc.
+const ORDER_FIELDS_HISTORY = `
+  id
+  lineItems(first: 50) {
+    edges {
+      node {
+        quantity
+        variant { id }
+      }
+    }
+  }
+`;
+
+/**
+ * Carica ordini con soli lineItems (variantId + qty) per ricostruire lo stock storico.
+ * Formula: stock_al_giorno_X = stock_attuale + pezzi_venduti_tra_X_e_oggi
+ */
+export async function fetchOrdersForHistory(admin, { startDate, endDate }) {
+  const cacheKey = `orders:H:${startDate || ""}:${endDate || ""}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const orders = [];
+  let hasNextPage = true;
+  let cursor = null;
+  const queryFilter = buildDateQuery(startDate, endDate);
+
+  while (hasNextPage) {
+    const variables = { first: 250, query: queryFilter };
+    if (cursor) variables.after = cursor;
+
+    const response = await admin.graphql(
+      `#graphql
+      query getOrdersHistory($first: Int!, $after: String, $query: String) {
+        orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { ${ORDER_FIELDS_HISTORY} } }
+        }
+      }`,
+      { variables },
+    );
+
+    const json = await response.json();
+    const data = json.data?.orders;
+    if (!data) break;
+    orders.push(...data.edges.map((e) => e.node));
+    hasNextPage = data.pageInfo.hasNextPage;
+    cursor = data.pageInfo.endCursor;
+  }
+
+  cacheSet(cacheKey, orders);
+  return orders;
+}
+
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
 
 const PRODUCT_FIELDS = `

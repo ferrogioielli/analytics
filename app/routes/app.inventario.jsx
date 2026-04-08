@@ -1,8 +1,8 @@
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
-  Page, Card, BlockStack, InlineStack, Text, Button, Badge,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge, Banner,
   DataTable, Select, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -10,11 +10,14 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchProducts } from "../utils/shopify.server";
+import { fetchProducts, fetchOrdersForHistory } from "../utils/shopify.server";
 import { formatCurrency, daysAgo } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const snapshot = url.searchParams.get("snapshot") || null;
+
   const products = await fetchProducts(admin);
 
   const variants = [];
@@ -51,7 +54,59 @@ export const loader = async ({ request }) => {
   const types = [...new Set(variants.map((v) => v.productType).filter(Boolean))].sort();
   const allTags = [...new Set(variants.flatMap((v) => v.tags))].sort();
 
-  return json({ variants, vendors, types, allTags });
+  // ── SNAPSHOT STORICO ─────────────────────────────────────────────────────────
+  // Ricostruzione approssimativa: stock_al_giorno_X = stock_attuale + venduto_tra_X_e_oggi
+  let snapshotData = null;
+  if (snapshot) {
+    const today = new Date().toISOString().slice(0, 10);
+    const orders = await fetchOrdersForHistory(admin, { startDate: snapshot, endDate: today });
+
+    // Mappa variantId → pezzi venduti nel periodo [snapshot, oggi]
+    const soldMap = new Map();
+    for (const order of orders) {
+      for (const edge of order.lineItems.edges) {
+        const node = edge.node;
+        if (!node.variant?.id) continue;
+        soldMap.set(node.variant.id, (soldMap.get(node.variant.id) || 0) + node.quantity);
+      }
+    }
+
+    // Ricostruisce il magazzino storico per ogni variante e aggrega per brand
+    let totalCostValue = 0;
+    let totalSalesValue = 0;
+    const brandMap = new Map();
+
+    for (const v of variants) {
+      const sold = soldMap.get(v.variantId) || 0;
+      const histQty = v.qty + sold;                  // stock_X = stock_oggi + venduto_tra_X_oggi
+      const histCost = v.cost * histQty;
+      const histSales = v.price * histQty;
+      totalCostValue += histCost;
+      totalSalesValue += histSales;
+
+      const brand = v.vendor || "—";
+      if (!brandMap.has(brand)) brandMap.set(brand, { brand, qty: 0, costValue: 0, salesValue: 0 });
+      const b = brandMap.get(brand);
+      b.qty += histQty;
+      b.costValue += histCost;
+      b.salesValue += histSales;
+    }
+
+    const currentCostValue = variants.reduce((s, v) => s + v.stockValue, 0);
+    const currentSalesValue = variants.reduce((s, v) => s + v.salesValue, 0);
+
+    snapshotData = {
+      snapshot,
+      totalCostValue,
+      totalSalesValue,
+      currentCostValue,
+      currentSalesValue,
+      ordersCount: orders.length,
+      byBrand: Array.from(brandMap.values()).sort((a, b) => b.costValue - a.costValue),
+    };
+  }
+
+  return json({ variants, vendors, types, allTags, snapshotData });
 };
 
 function exportCSV(rows, filename) {
@@ -137,7 +192,8 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
 const SORT_KEYS = [null, null, "vendor", "productType", "margin", "qty", "stockValue", "salesValue"];
 
 export default function Inventario() {
-  const { variants, vendors, types, allTags } = useLoaderData();
+  const { variants, vendors, types, allTags, snapshotData } = useLoaderData();
+  const navigate = useNavigate();
 
   const [search, setSearch] = useState("");
   // Partono tutti selezionati — togliere = escludere
@@ -149,6 +205,9 @@ export default function Inventario() {
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [threshold, setThreshold] = useState("5");
+  // Snapshot storico — picker locale (separato dalla navigate)
+  const [snapshotInput, setSnapshotInput] = useState(snapshotData?.snapshot || "");
+  useEffect(() => setSnapshotInput(snapshotData?.snapshot || ""), [snapshotData]);
   const [sortCol, setSortCol] = useState(6);
   const [sortDir, setSortDir] = useState("descending");
   const [page, setPage] = useState(0);
@@ -493,6 +552,107 @@ export default function Inventario() {
                 ])}
               />
             )}
+          </BlockStack>
+        </Card>
+
+        {/* ── VALORE MAGAZZINO STORICO ── */}
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">Valore magazzino a data</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Stima il valore del magazzino in una data passata ricostruendo le vendite dagli ordini.
+              Formula: <em>stock al giorno X = stock attuale + pezzi venduti tra X e oggi</em>
+            </Text>
+
+            <InlineStack gap="200" blockAlign="end" wrap>
+              <div style={{ minWidth: 180 }}>
+                <TextField
+                  label="Data snapshot"
+                  type="date"
+                  value={snapshotInput}
+                  onChange={setSnapshotInput}
+                  autoComplete="off"
+                  max={today}
+                />
+              </div>
+              <div style={{ paddingTop: 22 }}>
+                <Button
+                  variant="primary"
+                  onClick={() => navigate(`?snapshot=${snapshotInput}`)}
+                  disabled={!snapshotInput}
+                >
+                  Calcola
+                </Button>
+              </div>
+              {snapshotData && (
+                <div style={{ paddingTop: 22 }}>
+                  <Button size="slim" plain onClick={() => { setSnapshotInput(""); navigate("?"); }}>
+                    ✕ Azzera
+                  </Button>
+                </div>
+              )}
+            </InlineStack>
+
+            {snapshotData && (() => {
+              const daysDiff = Math.round((new Date(today) - new Date(snapshotData.snapshot)) / (1000 * 60 * 60 * 24));
+              const over60 = daysDiff > 60;
+              const deltaCost = snapshotData.totalCostValue - snapshotData.currentCostValue;
+              const deltaPct = snapshotData.currentCostValue > 0
+                ? (deltaCost / snapshotData.currentCostValue) * 100
+                : null;
+              return (
+                <BlockStack gap="300">
+                  {snapshotData.ordersCount === 0 ? (
+                    <Banner tone="warning">
+                      <Text as="p" variant="bodySm">
+                        Nessun ordine trovato per il periodo selezionato.
+                        {over60 && " La data è oltre 60 giorni fa: potrebbe essere necessario lo scope read_all_orders (richiesto a Shopify Partners). I valori mostrati coincidono con il magazzino attuale."}
+                      </Text>
+                    </Banner>
+                  ) : (
+                    <Banner tone="info">
+                      <Text as="p" variant="bodySm">
+                        ⚠️ Stima approssimativa — basata su {snapshotData.ordersCount} ordini trovati.
+                        Non include riassortimenti manuali, resi o correzioni manuali dello stock.
+                        {over60 && " ⚠️ Periodo oltre 60 giorni: dati completi richiedono lo scope read_all_orders."}
+                      </Text>
+                    </Banner>
+                  )}
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                    {[
+                      { label: `Val. costo al ${snapshotData.snapshot}`, value: formatCurrency(snapshotData.totalCostValue) },
+                      { label: `Val. vendita al ${snapshotData.snapshot}`, value: formatCurrency(snapshotData.totalSalesValue) },
+                      { label: "Val. costo oggi", value: formatCurrency(snapshotData.currentCostValue) },
+                      {
+                        label: "Variazione dal snapshot ad oggi",
+                        value: formatCurrency(deltaCost),
+                        badge: deltaPct !== null ? { tone: deltaCost < 0 ? "critical" : "success", text: `${deltaCost > 0 ? "+" : ""}${deltaPct.toFixed(1)}%` } : null,
+                      },
+                    ].map(({ label, value, badge }) => (
+                      <Card key={label}>
+                        <BlockStack gap="100">
+                          <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+                          <Text as="p" variant="headingMd" fontWeight="bold">{value}</Text>
+                          {badge && <Badge tone={badge.tone}>{badge.text}</Badge>}
+                        </BlockStack>
+                      </Card>
+                    ))}
+                  </div>
+
+                  <DataTable
+                    columnContentTypes={["text", "numeric", "numeric", "numeric"]}
+                    headings={["Brand", `Pezzi stimati al ${snapshotData.snapshot}`, "Val. costo stimato", "Val. vendita stimato"]}
+                    rows={snapshotData.byBrand.map((b) => [
+                      b.brand,
+                      b.qty.toLocaleString("it-IT"),
+                      b.costValue > 0 ? formatCurrency(b.costValue) : "—",
+                      formatCurrency(b.salesValue),
+                    ])}
+                  />
+                </BlockStack>
+              );
+            })()}
           </BlockStack>
         </Card>
 
