@@ -141,7 +141,7 @@ export default function Dashboard() {
 
   return (
     <Page>
-      <TitleBar title="Ferro Reports — Dashboard" />
+      <TitleBar title="Analytics" />
       <BlockStack gap="500">
         {/* Header */}
         <InlineStack align="space-between" blockAlign="center" wrap>
