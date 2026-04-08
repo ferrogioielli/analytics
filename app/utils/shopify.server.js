@@ -284,7 +284,7 @@ export function calcKPI(orders, prevOrders) {
     countDelta: prevCount > 0 ? ((count - prevCount) / prevCount) * 100 : null,
     aovDelta: prevAov > 0 ? ((aov - prevAov) / prevAov) * 100 : null,
     newDelta: prevNew > 0 ? ((newCustomers - prevNew) / prevNew) * 100 : null,
-    currency: orders[0]?.totalPriceSet.shopMoney.currencyCode || "EUR",
+    currency: orders[0]?.totalPriceSet?.shopMoney?.currencyCode || "EUR",
   };
 }
 

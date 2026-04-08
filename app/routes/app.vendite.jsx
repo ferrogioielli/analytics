@@ -2,7 +2,7 @@ import { useLoaderData, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useEffect, useMemo } from "react";
 import {
-  Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge,
   DataTable, Select, Modal, TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -177,7 +177,7 @@ export default function Vendite() {
   const chartData = useMemo(() => groupByPeriod(byDay, groupBy), [byDay, groupBy]);
 
   const maxOrder = orders.length > 0
-    ? Math.max(...orders.map((o) => parseFloat(o.totalPriceSet.shopMoney.amount)))
+    ? Math.max(...orders.map((o) => parseFloat(o.totalPriceSet?.shopMoney?.amount || 0)))
     : 0;
   const avgDaily = byDay.length > 0
     ? byDay.reduce((s, d) => s + d.revenue, 0) / byDay.length
@@ -236,47 +236,35 @@ export default function Vendite() {
         </InlineStack>
 
         {/* KPI */}
-        <Layout>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Fatturato totale</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(kpi.revenue, currency)}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Media giornaliera</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(avgDaily, currency)}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Ordine più alto</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(maxOrder, currency)}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Sconti totali</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(totalDiscount, currency)}</Text>
-            </BlockStack></Card>
-          </Layout.Section>
-        </Layout>
-        <Layout>
-          <Layout.Section variant="oneHalf">
-            <Card><BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Stesso periodo anno precedente</Text>
-              <InlineStack gap="300" blockAlign="center">
-                <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(yoyRevenue, currency)}</Text>
-                {yoyDelta !== null && (
-                  <Badge tone={yoyDelta >= 0 ? "success" : "critical"}>
-                    {yoyDelta >= 0 ? "▲" : "▼"} {Math.abs(yoyDelta).toFixed(1)}% vs anno prec.
-                  </Badge>
-                )}
-              </InlineStack>
-            </BlockStack></Card>
-          </Layout.Section>
-        </Layout>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Fatturato totale</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(kpi.revenue, currency)}</Text>
+          </BlockStack></Card>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Media giornaliera</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(avgDaily, currency)}</Text>
+          </BlockStack></Card>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">N. ordini</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{kpi.count}</Text>
+          </BlockStack></Card>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Ordine più alto</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(maxOrder, currency)}</Text>
+          </BlockStack></Card>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">vs anno precedente</Text>
+            <InlineStack gap="200" blockAlign="center" wrap={false}>
+              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(yoyRevenue, currency)}</Text>
+              {yoyDelta !== null && (
+                <Badge tone={yoyDelta >= 0 ? "success" : "critical"}>
+                  {yoyDelta >= 0 ? "▲" : "▼"}{Math.abs(yoyDelta).toFixed(1)}%
+                </Badge>
+              )}
+            </InlineStack>
+          </BlockStack></Card>
+        </div>
 
         {/* Grafico fatturato */}
         <Card>
@@ -320,44 +308,40 @@ export default function Vendite() {
 
         {/* Top prodotti */}
         {topByRevenue.length > 0 && (
-          <Layout>
-            <Layout.Section variant="oneHalf">
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Top prodotti per fatturato</Text>
-                  <BlockStack gap="100">
-                    {topByRevenue.map((p, i) => (
-                      <InlineStack key={p.id} align="space-between" blockAlign="center">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Text as="span" variant="bodySm" tone="subdued" fontWeight="semibold">{i + 1}.</Text>
-                          <Text as="span" variant="bodySm">{p.title}</Text>
-                        </InlineStack>
-                        <Text as="span" variant="bodySm" tone="subdued">{formatCurrency(p.revenue, currency)}</Text>
-                      </InlineStack>
-                    ))}
-                  </BlockStack>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Top prodotti per fatturato</Text>
+                <BlockStack gap="100">
+                  {topByRevenue.map((p, i) => (
+                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ fontSize: 12, color: "#6d7175", fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
+                        <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+                      </div>
+                      <span style={{ fontSize: 12, color: "#6d7175", flexShrink: 0 }}>{formatCurrency(p.revenue, currency)}</span>
+                    </div>
+                  ))}
                 </BlockStack>
-              </Card>
-            </Layout.Section>
-            <Layout.Section variant="oneHalf">
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Top prodotti per unità vendute</Text>
-                  <BlockStack gap="100">
-                    {topByUnits.map((p, i) => (
-                      <InlineStack key={p.id} align="space-between" blockAlign="center">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Text as="span" variant="bodySm" tone="subdued" fontWeight="semibold">{i + 1}.</Text>
-                          <Text as="span" variant="bodySm">{p.title}</Text>
-                        </InlineStack>
-                        <Text as="span" variant="bodySm" tone="subdued">{p.units} pz</Text>
-                      </InlineStack>
-                    ))}
-                  </BlockStack>
+              </BlockStack>
+            </Card>
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Top prodotti per unità vendute</Text>
+                <BlockStack gap="100">
+                  {topByUnits.map((p, i) => (
+                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ fontSize: 12, color: "#6d7175", fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
+                        <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
+                      </div>
+                      <span style={{ fontSize: 12, color: "#6d7175", flexShrink: 0 }}>{p.units} pz</span>
+                    </div>
+                  ))}
                 </BlockStack>
-              </Card>
-            </Layout.Section>
-          </Layout>
+              </BlockStack>
+            </Card>
+          </div>
         )}
 
         {/* Tabella ordini */}

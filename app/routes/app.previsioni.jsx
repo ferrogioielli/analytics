@@ -42,7 +42,7 @@ export const loader = async ({ request }) => {
     fetchOrders(admin, { startDate: start90, endDate: todayStr }),
   ]);
 
-  const currency = yearOrders[0]?.totalPriceSet.shopMoney.currencyCode || "EUR";
+  const currency = yearOrders[0]?.totalPriceSet?.shopMoney?.currencyCode || "EUR";
 
   // ── Dati anno corrente giornalieri ──────────────────────────────────────────
   const yearDailyMap = new Map();

@@ -11,8 +11,8 @@ import { fetchProducts } from "../utils/shopify.server";
 import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const shop = admin.session.shop; // es. "mionegozio.myshopify.com"
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop; // es. "mionegozio.myshopify.com"
 
   const products = await fetchProducts(admin);
 

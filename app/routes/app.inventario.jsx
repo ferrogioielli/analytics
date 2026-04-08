@@ -133,7 +133,7 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
   );
 }
 
-const SORT_KEYS = [null, null, null, "vendor", "productType", "cost", "price", "margin", "qty", "stockValue", "salesValue", null];
+const SORT_KEYS = [null, null, "vendor", "productType", "margin", "qty", "stockValue", "salesValue"];
 
 export default function Inventario() {
   const { variants, vendors, types, allTags } = useLoaderData();
@@ -145,7 +145,7 @@ export default function Inventario() {
   const [filterTags, setFilterTags] = useState(() => allTags);
   const [filterStatus, setFilterStatus] = useState("");
   const [threshold, setThreshold] = useState("5");
-  const [sortCol, setSortCol] = useState(9);
+  const [sortCol, setSortCol] = useState(6);
   const [sortDir, setSortDir] = useState("descending");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
@@ -225,17 +225,13 @@ export default function Inventario() {
 
   const tableRows = pageData.map((v) => [
     <Text key={v.variantId} as="span" variant="bodySm">{v.productTitle}</Text>,
-    v.variantTitle !== "Default Title" ? v.variantTitle : "—",
     v.sku || "—",
     v.vendor || "—",
     v.productType || "—",
-    v.cost > 0 ? formatCurrency(v.cost) : "—",
-    formatCurrency(v.price),
     <MarginCell key={v.variantId + "m"} margin={v.margin} />,
     <StockBadge key={v.variantId + "s"} qty={v.qty} threshold={thr} />,
     v.cost > 0 ? formatCurrency(v.stockValue) : "—",
     formatCurrency(v.salesValue),
-    filteredTotalValue > 0 && v.cost > 0 ? (v.stockValue / filteredTotalValue * 100).toFixed(1) + "%" : "—",
   ]);
 
   const exportRows = sorted.map((v) => ({
@@ -475,14 +471,14 @@ export default function Inventario() {
               <Text as="p" tone="subdued">Nessuna variante trovata con i filtri selezionati.</Text>
             ) : (
               <DataTable
-                columnContentTypes={["text","text","text","text","text","numeric","numeric","numeric","text","numeric","numeric","numeric"]}
-                headings={["Prodotto","Variante","SKU","Brand","Tipo","Costo unitario","Prezzo vendita","Margine %","Stock","Val. magazzino","Val. vendita","% Val."]}
+                columnContentTypes={["text","text","text","text","numeric","text","numeric","numeric"]}
+                headings={["Prodotto","SKU","Brand","Tipo","Margine %","Stock","Val. magazzino","Val. vendita"]}
                 rows={tableRows}
-                sortable={[false, false, false, true, true, true, true, true, true, true, true, false]}
+                sortable={[false, false, true, true, true, true, true, true]}
                 defaultSortDirection="descending"
-                initialSortColumnIndex={9}
+                initialSortColumnIndex={6}
                 onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
-                totals={["", "", "", "", "", "", "", "", filteredTotalQty.toLocaleString("it-IT"), filteredTotalValue > 0 ? formatCurrency(filteredTotalValue) : "", formatCurrency(filteredSalesValue), "100%"]}
+                totals={["", "", "", "", "", filteredTotalQty.toLocaleString("it-IT"), filteredTotalValue > 0 ? formatCurrency(filteredTotalValue) : "", formatCurrency(filteredSalesValue)]}
                 showTotalsInFooter
               />
             )}

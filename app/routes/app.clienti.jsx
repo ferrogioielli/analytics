@@ -2,7 +2,7 @@ import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import { useState, useMemo, useEffect } from "react";
 import {
-  Page, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable, TextField,
+  Page, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -92,48 +92,49 @@ function topByOrders(orders, n = 10) {
 }
 
 const RFM_SEGMENTS = [
-  { key: "Champions",   color: "#008060", tone: "success",  label: "Champion",    desc: "Compra spesso, ha speso tanto, è tornato di recente. Cliente ideale." },
-  { key: "Abituali",   color: "#1E90FF", tone: "info",     label: "Abituale",    desc: "Torna regolarmente, ≥2 ordini negli ultimi 60 giorni." },
-  { key: "Nuovi",      color: "#2ECC71", tone: "success",  label: "Nuovo",       desc: "Ha fatto il primo ordine negli ultimi 30 giorni. Da fidelizzare." },
-  { key: "Occasionali",color: "#FFB400", tone: "warning",  label: "Occasionale", desc: "Compra ogni tanto, senza un ritmo preciso." },
-  { key: "A rischio",  color: "#FF4D4D", tone: "critical", label: "A rischio",   desc: "Aveva ≥2 ordini ma non compra da oltre 90 giorni. Da ricontattare." },
-  { key: "Persi",      color: "#888888", tone: "critical", label: "Perso",       desc: "Nessun acquisto da oltre 180 giorni." },
+  { key: "Champions",    color: "#008060", tone: "success",  label: "Champion",    desc: "Compra spesso, ha speso tanto, è tornato di recente. Cliente ideale." },
+  { key: "Abituali",    color: "#1E90FF", tone: "info",     label: "Abituale",    desc: "Torna regolarmente, ≥2 ordini negli ultimi 60 giorni." },
+  { key: "Nuovi",       color: "#2ECC71", tone: "success",  label: "Nuovo",       desc: "Ha fatto il primo ordine negli ultimi 30 giorni. Da fidelizzare." },
+  { key: "Occasionali", color: "#FFB400", tone: "warning",  label: "Occasionale", desc: "Compra ogni tanto, senza un ritmo preciso." },
+  { key: "A rischio",   color: "#FF4D4D", tone: "critical", label: "A rischio",   desc: "Aveva ≥2 ordini ma non compra da oltre 90 giorni. Da ricontattare." },
+  { key: "Persi",       color: "#888888", tone: "critical", label: "Perso",       desc: "Nessun acquisto da oltre 180 giorni." },
 ];
+
+// Componente lista clienti (stessa grafica Top 10)
+function ClientiList({ items, currency, emptyMsg, showInactivo = false }) {
+  if (!items.length) return <Text as="p" tone="subdued">{emptyMsg}</Text>;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px" }}>
+      {items.map((c, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid #f4f4f4" }}>
+          <InlineStack gap="200" blockAlign="center">
+            <span style={{ fontSize: 13, color: "#6d7175", minWidth: 20, fontWeight: 600 }}>{i + 1}.</span>
+            <BlockStack gap="0">
+              <Text as="span" variant="bodySm" fontWeight="semibold">{c.name}</Text>
+              <Text as="span" variant="bodySm" tone="subdued">{c.email}</Text>
+            </BlockStack>
+          </InlineStack>
+          <BlockStack gap="0">
+            <Text as="span" variant="bodySm" fontWeight="semibold">{formatCurrency(c.spend, currency)}</Text>
+            {showInactivo
+              ? <Text as="span" variant="bodySm" tone="subdued">
+                  {c.daysSinceLast < 9999 ? `inattivo da ${c.daysSinceLast}gg` : "—"}
+                </Text>
+              : <Text as="span" variant="bodySm" tone="subdued">{c.orders} {c.orders === 1 ? "ordine" : "ordini"}</Text>
+            }
+          </BlockStack>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function Clienti() {
   const { customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency } = useLoaderData();
 
-  const [search, setSearch] = useState("");
-  const [minOrders, setMinOrders] = useState("");
-  const [filterSegment, setFilterSegment] = useState("");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
   const [top10Period, setTop10Period] = useState("tutto"); // oggi | settimana | mese | tutto
-
-  // ── Top 10 filtrato per periodo ──
-  const top10 = useMemo(() => {
-    if (top10Period === "tutto") {
-      // Usa amountSpent storico dai clienti
-      return [...customers]
-        .sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0))
-        .slice(0, 10)
-        .map((c) => ({
-          name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
-          email: c.email || "—",
-          spend: parseFloat(c.amountSpent?.amount || 0),
-          orders: parseInt(c.numberOfOrders) || 0,
-        }));
-    }
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const filtered = ordersSummary.filter((o) => {
-      const d = o.createdAt.slice(0, 10);
-      if (top10Period === "oggi") return d === todayStr;
-      if (top10Period === "settimana") return d >= daysAgo(7);
-      if (top10Period === "mese") return d >= daysAgo(30);
-      return true;
-    });
-    return topByOrders(filtered, 10);
-  }, [customers, ordersSummary, top10Period]);
 
   // ── RFM segmentation ──
   const rfmSegments = useMemo(() => {
@@ -157,34 +158,64 @@ export default function Clienti() {
     });
   }, [customers]);
 
-  const segmentCounts = useMemo(() => {
-    const map = {};
-    for (const c of rfmSegments) map[c.segment] = (map[c.segment] || 0) + 1;
-    return map;
-  }, [rfmSegments]);
+  // ── Top 10 filtrato per periodo ──
+  const top10 = useMemo(() => {
+    if (top10Period === "tutto") {
+      return [...customers]
+        .sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0))
+        .slice(0, 10)
+        .map((c) => ({
+          name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
+          email: c.email || "—",
+          spend: parseFloat(c.amountSpent?.amount || 0),
+          orders: parseInt(c.numberOfOrders) || 0,
+        }));
+    }
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const filtered = ordersSummary.filter((o) => {
+      const d = o.createdAt.slice(0, 10);
+      if (top10Period === "oggi") return d === todayStr;
+      if (top10Period === "settimana") return d >= daysAgo(7);
+      if (top10Period === "mese") return d >= daysAgo(30);
+      return true;
+    });
+    return topByOrders(filtered, 10);
+  }, [customers, ordersSummary, top10Period]);
 
+  // ── Clienti a rischio (A rischio + Persi, top 10 per inattività) ──
   const atRisk = useMemo(() =>
-    rfmSegments.filter((c) => c.segment === "A rischio" || c.segment === "Persi")
+    rfmSegments
+      .filter((c) => c.segment === "A rischio" || c.segment === "Persi")
       .sort((a, b) => b.daysSinceLast - a.daysSinceLast)
       .slice(0, 10)
+      .map((c) => ({
+        name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
+        email: c.email || "—",
+        spend: parseFloat(c.amountSpent?.amount || 0),
+        orders: parseInt(c.numberOfOrders) || 0,
+        daysSinceLast: c.daysSinceLast,
+      }))
   , [rfmSegments]);
 
-  // ── Tabella clienti filtrata ──
-  const filtered = useMemo(() => rfmSegments.filter((c) => {
-    const fullName = `${c.firstName || ""} ${c.lastName || ""} ${c.email || ""}`.toLowerCase();
-    if (search && !fullName.includes(search.toLowerCase())) return false;
-    if (minOrders && parseInt(c.numberOfOrders) < parseInt(minOrders)) return false;
-    if (filterSegment && c.segment !== filterSegment) return false;
-    return true;
-  }), [rfmSegments, search, minOrders, filterSegment]);
+  // ── Clienti abituali (Champions + Abituali, top 10 per spesa) ──
+  const habitual = useMemo(() =>
+    rfmSegments
+      .filter((c) => c.segment === "Champions" || c.segment === "Abituali")
+      .sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0))
+      .slice(0, 10)
+      .map((c) => ({
+        name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
+        email: c.email || "—",
+        spend: parseFloat(c.amountSpent?.amount || 0),
+        orders: parseInt(c.numberOfOrders) || 0,
+        daysSinceLast: c.daysSinceLast,
+      }))
+  , [rfmSegments]);
 
-  // Reset pagina quando cambia il filtro
-  useEffect(() => { setPage(0); }, [filtered]);
+  // ── Tabella tutti i clienti ──
+  const totalPages = Math.ceil(rfmSegments.length / PAGE_SIZE);
+  const pageData = rfmSegments.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  const segColors = { Champions: "#008060", Abituali: "#1E90FF", Nuovi: "#2ECC71", Occasionali: "#FFB400", "A rischio": "#FF4D4D", Persi: "#888" };
   const segTones = { Champions: "success", Abituali: "info", Nuovi: "success", Occasionali: "warning", "A rischio": "critical", Persi: "critical" };
 
   const tableRows = pageData.map((c) => [
@@ -197,9 +228,10 @@ export default function Clienti() {
     c.daysSinceLast < 9999 ? `${c.daysSinceLast}gg fa` : "—",
   ]);
 
-  const exportRows = filtered.map((c) => ({
+  const exportRows = rfmSegments.map((c) => ({
     Nome: `${c.firstName || ""} ${c.lastName || ""}`.trim(),
     Email: c.email || "",
+    Segmento: c.segment,
     "N. ordini": c.numberOfOrders,
     "Spesa totale": parseFloat(c.amountSpent?.amount || 0).toFixed(2),
     "Ultimo ordine": c.lastOrder ? formatDate(c.lastOrder.createdAt) : "",
@@ -273,27 +305,29 @@ export default function Clienti() {
                 ))}
               </InlineStack>
             </InlineStack>
-            {top10.length === 0 ? (
-              <Text as="p" tone="subdued">Nessun ordine nel periodo selezionato.</Text>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px" }}>
-                {top10.map((c, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid #f4f4f4" }}>
-                    <InlineStack gap="200" blockAlign="center">
-                      <span style={{ fontSize: 13, color: "#6d7175", minWidth: 20, fontWeight: 600 }}>{i + 1}.</span>
-                      <BlockStack gap="0">
-                        <Text as="span" variant="bodySm" fontWeight="semibold">{c.name}</Text>
-                        <Text as="span" variant="bodySm" tone="subdued">{c.email}</Text>
-                      </BlockStack>
-                    </InlineStack>
-                    <BlockStack gap="0">
-                      <Text as="span" variant="bodySm" fontWeight="semibold">{formatCurrency(c.spend, currency)}</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">{c.orders} {c.orders === 1 ? "ordine" : "ordini"}</Text>
-                    </BlockStack>
-                  </div>
-                ))}
-              </div>
-            )}
+            <ClientiList items={top10} currency={currency} emptyMsg="Nessun ordine nel periodo selezionato." />
+          </BlockStack>
+        </Card>
+
+        {/* ── CLIENTI A RISCHIO ── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Clienti a rischio</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Non acquistano da oltre 90 giorni</Text>
+            </InlineStack>
+            <ClientiList items={atRisk} currency={currency} emptyMsg="Nessun cliente a rischio." showInactivo />
+          </BlockStack>
+        </Card>
+
+        {/* ── CLIENTI ABITUALI ── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Clienti abituali</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Champions e abituali per spesa totale</Text>
+            </InlineStack>
+            <ClientiList items={habitual} currency={currency} emptyMsg="Nessun cliente abituale trovato." />
           </BlockStack>
         </Card>
 
@@ -315,44 +349,16 @@ export default function Clienti() {
           </Card>
         )}
 
-        {/* ── TABELLA CLIENTI ── */}
+        {/* ── TABELLA TUTTI I CLIENTI ── */}
         <Card>
           <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Tutti i clienti ({filtered.length})</Text>
-
-            {/* Filtri per segmento */}
-            <InlineStack gap="150" wrap>
-              <Button size="slim" variant={filterSegment === "" ? "primary" : "plain"} onClick={() => setFilterSegment("")}>
-                Tutti ({customers.length})
-              </Button>
-              {RFM_SEGMENTS.map(({ key, label }) => {
-                const count = segmentCounts[key] || 0;
-                if (count === 0) return null;
-                return (
-                  <Button key={key} size="slim"
-                    variant={filterSegment === key ? "primary" : "plain"}
-                    onClick={() => setFilterSegment(filterSegment === key ? "" : key)}>
-                    {label} ({count})
-                  </Button>
-                );
-              })}
-            </InlineStack>
-
-            {/* Cerca + min ordini */}
-            <InlineStack gap="200" wrap>
-              <div style={{ minWidth: 220 }}>
-                <TextField label="" labelHidden placeholder="Cerca nome / email..." value={search} onChange={setSearch} autoComplete="off" />
-              </div>
-              <div style={{ minWidth: 130 }}>
-                <TextField label="" labelHidden placeholder="Min. ordini..." type="number" value={minOrders} onChange={setMinOrders} autoComplete="off" />
-              </div>
-            </InlineStack>
+            <Text as="h2" variant="headingMd">Tutti i clienti ({rfmSegments.length})</Text>
 
             {totalPages > 1 && (
               <InlineStack align="space-between" blockAlign="center">
                 <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
                 <Text as="span" variant="bodySm">
-                  Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} di {filtered.length})
+                  Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rfmSegments.length)} di {rfmSegments.length})
                 </Text>
                 <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
               </InlineStack>

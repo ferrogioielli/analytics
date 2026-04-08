@@ -87,7 +87,7 @@ export const loader = async ({ request }) => {
   const totalCostRevenue = withCost.reduce((s, p) => s + p.revenue, 0);
   const avgMargin = totalCostRevenue > 0 ? (totalProfit / totalCostRevenue) * 100 : null;
   const noCostCount = productList.filter((p) => !p.hasCost).length;
-  const currency = orders[0]?.totalPriceSet.shopMoney.currencyCode || "EUR";
+  const currency = orders[0]?.totalPriceSet?.shopMoney?.currencyCode || "EUR";
 
   return json({ productList, brandList, totalProfit, avgMargin, noCostCount, start, end, currency });
 };
