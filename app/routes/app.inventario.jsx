@@ -618,18 +618,20 @@ function SnapshotResults({ data, date }) {
 }
 
 export default function Inventario() {
-  const { data } = useLoaderData();
+  const { data, snapshotDate } = useLoaderData();
 
   return (
     <Page title="Inventario">
       <TitleBar title="Inventario" />
       <BlockStack gap="500">
         <SnapshotSection />
-        <Suspense fallback={<LoadingSkeleton />}>
-          <Await resolve={data}>
-            {(resolved) => <InventarioContent data={resolved} />}
-          </Await>
-        </Suspense>
+        {!snapshotDate && (
+          <Suspense fallback={<LoadingSkeleton />}>
+            <Await resolve={data}>
+              {(resolved) => <InventarioContent data={resolved} />}
+            </Await>
+          </Suspense>
+        )}
       </BlockStack>
     </Page>
   );
