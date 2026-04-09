@@ -16,7 +16,7 @@ import { formatCurrency } from "../utils/format";
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const snapshotDate = url.searchParams.get("snapshot") || null;
+  const snapshotDate = url.searchParams.get("snapshot") || new Date().toISOString().slice(0, 10);
 
   const dataPromise = (async () => {
     const products = await fetchProducts(admin);

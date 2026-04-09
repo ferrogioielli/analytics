@@ -206,28 +206,29 @@ export async function runShopifyQL(admin, query) {
 
   const response = await admin.graphql(
     `#graphql
-    mutation shopifyqlQuery($query: String!) {
+    query shopifyQL($query: String!) {
       shopifyqlQuery(query: $query) {
-        __typename
-        ... on TableResponse {
-          tableData {
-            rowData
-            columns { name dataType }
-          }
+        tableData {
+          columns { name dataType }
+          rows
         }
-        parseErrors { code message range { start { line character } end { line character } } }
+        parseErrors {
+          code
+          message
+        }
       }
     }`,
     { variables: { query } },
   );
 
   const json = await response.json();
-  const result = json.data?.shopifyqlQuery;
 
   if (json.errors?.length) {
     console.error("ShopifyQL GraphQL errors:", JSON.stringify(json.errors));
     throw new Error(json.errors[0]?.message || "ShopifyQL query failed");
   }
+
+  const result = json.data?.shopifyqlQuery;
 
   if (result?.parseErrors?.length) {
     console.error("ShopifyQL parse errors:", JSON.stringify(result.parseErrors));
@@ -235,11 +236,11 @@ export async function runShopifyQL(admin, query) {
   }
 
   const table = result?.tableData;
-  if (!table?.columns?.length || !table?.rowData?.length) return [];
+  if (!table?.columns?.length || !table?.rows?.length) return [];
 
   const cols = table.columns.map((c) => c.name);
-  const rows = table.rowData.map((row) => {
-    const cells = JSON.parse(row);
+  const rows = table.rows.map((row) => {
+    const cells = typeof row === "string" ? JSON.parse(row) : row;
     const obj = {};
     cols.forEach((col, i) => { obj[col] = cells[i]; });
     return obj;
