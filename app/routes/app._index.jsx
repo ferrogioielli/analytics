@@ -1,6 +1,6 @@
-import { useLoaderData, useNavigate } from "@remix-run/react";
-import { json } from "@remix-run/node";
-import { useState, useEffect } from "react";
+import { useLoaderData, useNavigate, Await } from "@remix-run/react";
+import { defer } from "@remix-run/node";
+import { useState, useEffect, Suspense } from "react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button, Badge, Box, TextField,
 } from "@shopify/polaris";
@@ -25,17 +25,18 @@ export const loader = async ({ request }) => {
   const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
   const prev = getPrevPeriod(start, end);
 
-  const [orders, prevOrders] = await Promise.all([
+  const dataPromise = Promise.all([
     fetchOrders(admin, { startDate: start, endDate: end }),
     fetchOrders(admin, { startDate: prev.start, endDate: prev.end, skinny: true }),
-  ]);
+  ]).then(([orders, prevOrders]) => ({
+    kpi: calcKPI(orders, prevOrders),
+    byDay: groupOrdersByDay(orders),
+    topProducts: topProductsByRevenue(orders, 10),
+    byStatus: ordersByFinancialStatus(orders),
+    currency: calcKPI(orders, prevOrders).currency,
+  }));
 
-  const kpi = calcKPI(orders, prevOrders);
-  const byDay = groupOrdersByDay(orders);
-  const topProducts = topProductsByRevenue(orders, 10);
-  const byStatus = ordersByFinancialStatus(orders);
-
-  return json({ kpi, byDay, topProducts, byStatus, start, end, currency: kpi.currency });
+  return defer({ data: dataPromise, start, end });
 };
 
 // ─── COLORI ────────────────────────────────────────────────────────────────────
@@ -134,40 +135,44 @@ function exportCSV(rows, filename) {
   URL.revokeObjectURL(url);
 }
 
-// ─── COMPONENT ─────────────────────────────────────────────────────────────────
-export default function Dashboard() {
-  const { kpi, byDay, topProducts, byStatus, start, end, currency } = useLoaderData();
-
+// ─── LOADING SKELETON ─────────────────────────────────────────────────────────
+function LoadingSkeleton() {
+  const box = (w, h) => ({ width: w, height: h, background: "#f0f0f0", borderRadius: 6, animation: "pulse 1.5s infinite" });
   return (
-    <Page>
-      <TitleBar title="Analytics" />
-      <BlockStack gap="500">
-        {/* Header */}
-        <InlineStack align="space-between" blockAlign="center" wrap>
-          <DateRangePicker start={start} end={end} />
-          <Button
-            size="slim"
-            onClick={() => exportCSV(byDay.map((d) => ({ Data: d.date, Fatturato: d.revenue.toFixed(2), Ordini: d.orders })), `dashboard_${start}_${end}.csv`)}
-          >
-            Esporta CSV
-          </Button>
-        </InlineStack>
+    <>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
+      <Layout>
+        {[1,2,3,4].map(i => (
+          <Layout.Section key={i} variant="oneQuarter">
+            <Card><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /><div style={box("50%",18)} /></BlockStack></Card>
+          </Layout.Section>
+        ))}
+      </Layout>
+      <Card><div style={box("100%",240)} /></Card>
+    </>
+  );
+}
 
-        {/* KPI */}
-        <Layout>
-          <Layout.Section variant="oneQuarter">
-            <KpiCard title="Fatturato" value={formatCurrency(kpi.revenue, currency)} delta={kpi.revenueDelta} />
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <KpiCard title="Ordini" value={kpi.count.toString()} delta={kpi.countDelta} />
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <KpiCard title="Scontrino medio" value={formatCurrency(kpi.aov, currency)} delta={kpi.aovDelta} />
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <KpiCard title="Nuovi clienti" value={kpi.newCustomers.toString()} delta={kpi.newDelta} />
-          </Layout.Section>
-        </Layout>
+// ─── COMPONENT ─────────────────────────────────────────────────────────────────
+function DashboardContent({ data }) {
+  const { kpi, byDay, topProducts, byStatus, currency } = data;
+  return (
+    <>
+      {/* KPI */}
+      <Layout>
+        <Layout.Section variant="oneQuarter">
+          <KpiCard title="Fatturato" value={formatCurrency(kpi.revenue, currency)} delta={kpi.revenueDelta} />
+        </Layout.Section>
+        <Layout.Section variant="oneQuarter">
+          <KpiCard title="Ordini" value={kpi.count.toString()} delta={kpi.countDelta} />
+        </Layout.Section>
+        <Layout.Section variant="oneQuarter">
+          <KpiCard title="Scontrino medio" value={formatCurrency(kpi.aov, currency)} delta={kpi.aovDelta} />
+        </Layout.Section>
+        <Layout.Section variant="oneQuarter">
+          <KpiCard title="Nuovi clienti" value={kpi.newCustomers.toString()} delta={kpi.newDelta} />
+        </Layout.Section>
+      </Layout>
 
         {/* Grafici riga 1 */}
         <Layout>
@@ -271,6 +276,25 @@ export default function Dashboard() {
             </Card>
           </Layout.Section>
         </Layout>
+    </>
+  );
+}
+
+export default function Dashboard() {
+  const { data, start, end } = useLoaderData();
+
+  return (
+    <Page>
+      <TitleBar title="Analytics" />
+      <BlockStack gap="500">
+        <InlineStack align="space-between" blockAlign="center" wrap>
+          <DateRangePicker start={start} end={end} />
+        </InlineStack>
+        <Suspense fallback={<LoadingSkeleton />}>
+          <Await resolve={data}>
+            {(resolved) => <DashboardContent data={resolved} />}
+          </Await>
+        </Suspense>
       </BlockStack>
     </Page>
   );

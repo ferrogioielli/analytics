@@ -1,6 +1,6 @@
-import { useLoaderData, useNavigate } from "@remix-run/react";
-import { json } from "@remix-run/node";
-import { useState, useEffect, useMemo } from "react";
+import { useLoaderData, useNavigate, Await } from "@remix-run/react";
+import { defer } from "@remix-run/node";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
   DataTable, Select, Modal, TextField,
@@ -24,62 +24,49 @@ export const loader = async ({ request }) => {
   const yoyStart = new Date(start); yoyStart.setFullYear(yoyStart.getFullYear() - 1);
   const yoyEnd = new Date(end); yoyEnd.setFullYear(yoyEnd.getFullYear() - 1);
 
-  const [orders, prevOrders, yoyOrders] = await Promise.all([
+  const dataPromise = Promise.all([
     fetchOrders(admin, { startDate: start, endDate: end }),
-    // Periodi comparativi: solo totali/conteggi → skinny query (no lineItems)
     fetchOrders(admin, { startDate: prev.start, endDate: prev.end, skinny: true }),
     fetchOrders(admin, { startDate: yoyStart.toISOString().slice(0, 10), endDate: yoyEnd.toISOString().slice(0, 10), skinny: true }),
-  ]);
-
-  const kpi = calcKPI(orders, prevOrders);
-  const byDay = groupOrdersByDay(orders);
-  const yoyByDay = groupOrdersByDay(yoyOrders);
-
-  // Unisci per posizione (giorno 1 = primo giorno del periodo)
-  const mergedByDay = byDay.map((d, i) => ({
-    ...d,
-    prevRevenue: yoyByDay[i]?.revenue || 0,
-    prevOrders: yoyByDay[i]?.orders || 0,
-  }));
-
-  const yoyRevenue = yoyOrders.reduce((s, o) => s + parseFloat(o.totalPriceSet.shopMoney.amount), 0);
-  const yoyDelta = yoyRevenue > 0 ? ((kpi.revenue - yoyRevenue) / yoyRevenue) * 100 : null;
-
-  // Canali di vendita presenti negli ordini del periodo
-  const channelSet = new Map();
-  for (const o of orders) {
-    const ch = o.channelInformation;
-    const name = ch?.channelDefinition?.channelName || ch?.app?.title || "Sconosciuto";
-    const handle = ch?.channelDefinition?.handle || ch?.app?.title || "unknown";
-    if (!channelSet.has(handle)) channelSet.set(handle, name);
-  }
-  const channels = Array.from(channelSet.entries()).map(([handle, name]) => ({ handle, name }));
-
-  // Top prodotti per fatturato e per unità
-  const topByRevenue = topProductsByRevenue(orders, 10);
-  const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 10);
-
-  // Aggregato per brand (vendor): fatturato, pezzi, numero ordini distinti
-  const brandMap = new Map();
-  for (const order of orders) {
-    const brandsInOrder = new Set();
-    for (const edge of order.lineItems.edges) {
-      const item = edge.node;
-      const vendor = item.variant?.product?.vendor;
-      if (!vendor) continue;
-      brandsInOrder.add(vendor);
-      if (!brandMap.has(vendor)) brandMap.set(vendor, { name: vendor, revenue: 0, units: 0, orders: 0 });
-      const entry = brandMap.get(vendor);
-      entry.revenue += parseFloat(item.originalTotalSet?.shopMoney?.amount || 0);
-      entry.units += item.quantity;
+  ]).then(([orders, prevOrders, yoyOrders]) => {
+    const kpi = calcKPI(orders, prevOrders);
+    const byDay = groupOrdersByDay(orders);
+    const yoyByDay = groupOrdersByDay(yoyOrders);
+    const mergedByDay = byDay.map((d, i) => ({
+      ...d, prevRevenue: yoyByDay[i]?.revenue || 0, prevOrders: yoyByDay[i]?.orders || 0,
+    }));
+    const yoyRevenue = yoyOrders.reduce((s, o) => s + parseFloat(o.totalPriceSet.shopMoney.amount), 0);
+    const yoyDelta = yoyRevenue > 0 ? ((kpi.revenue - yoyRevenue) / yoyRevenue) * 100 : null;
+    const channelSet = new Map();
+    for (const o of orders) {
+      const ch = o.channelInformation;
+      const name = ch?.channelDefinition?.channelName || ch?.app?.title || "Sconosciuto";
+      const handle = ch?.channelDefinition?.handle || ch?.app?.title || "unknown";
+      if (!channelSet.has(handle)) channelSet.set(handle, name);
     }
-    for (const v of brandsInOrder) {
-      brandMap.get(v).orders += 1;
+    const channels = Array.from(channelSet.entries()).map(([handle, name]) => ({ handle, name }));
+    const topByRevenue = topProductsByRevenue(orders, 10);
+    const topByUnits = [...topByRevenue].sort((a, b) => b.units - a.units).slice(0, 10);
+    const brandMap = new Map();
+    for (const order of orders) {
+      const brandsInOrder = new Set();
+      for (const edge of order.lineItems.edges) {
+        const item = edge.node;
+        const vendor = item.variant?.product?.vendor;
+        if (!vendor) continue;
+        brandsInOrder.add(vendor);
+        if (!brandMap.has(vendor)) brandMap.set(vendor, { name: vendor, revenue: 0, units: 0, orders: 0 });
+        const entry = brandMap.get(vendor);
+        entry.revenue += parseFloat(item.originalTotalSet?.shopMoney?.amount || 0);
+        entry.units += item.quantity;
+      }
+      for (const v of brandsInOrder) brandMap.get(v).orders += 1;
     }
-  }
-  const brands = Array.from(brandMap.values()).sort((a, b) => b.revenue - a.revenue);
+    const brands = Array.from(brandMap.values()).sort((a, b) => b.revenue - a.revenue);
+    return { orders, kpi, byDay: mergedByDay, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands };
+  });
 
-  return json({ orders, kpi, byDay: mergedByDay, start, end, currency: kpi.currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands });
+  return defer({ data: dataPromise, start, end });
 };
 
 function DateRangePicker({ start, end }) {
@@ -176,8 +163,38 @@ function exportExcel(rows, filename) {
   });
 }
 
+function VenditeLoadingSkeleton() {
+  const box = (w, h) => ({ width: w, height: h, background: "#f0f0f0", borderRadius: 6, animation: "pulse 1.5s infinite" });
+  return (
+    <>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+        {[1,2,3,4,5].map(i => <Card key={i}><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>)}
+      </div>
+      <Card><div style={box("100%",260)} /></Card>
+    </>
+  );
+}
+
 export default function Vendite() {
-  const { orders, kpi, byDay, start, end, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands } = useLoaderData();
+  const { data, start, end } = useLoaderData();
+  return (
+    <Page title="Vendite">
+      <TitleBar title="Vendite" />
+      <BlockStack gap="500">
+        <DateRangePicker start={start} end={end} />
+        <Suspense fallback={<VenditeLoadingSkeleton />}>
+          <Await resolve={data}>
+            {(resolved) => <VenditeContent data={resolved} start={start} end={end} />}
+          </Await>
+        </Suspense>
+      </BlockStack>
+    </Page>
+  );
+}
+
+function VenditeContent({ data, start, end }) {
+  const { orders, kpi, byDay, currency, yoyRevenue, yoyDelta, channels, topByRevenue, topByUnits, brands } = data;
   const [filterStatus, setFilterStatus] = useState("");
   const [filterChannel, setFilterChannel] = useState("");
   const [filterBrand, setFilterBrand] = useState("");
@@ -249,16 +266,11 @@ export default function Vendite() {
   }));
 
   return (
-    <Page title="Vendite">
-      <TitleBar title="Vendite" />
-      <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="center" wrap>
-          <DateRangePicker start={start} end={end} />
-          <InlineStack gap="200">
+    <>
+        <InlineStack align="end" gap="200">
             <Button size="slim" onClick={() => exportCSV(exportRows, `vendite_${start}_${end}.csv`)}>CSV</Button>
             <Button size="slim" onClick={() => exportExcel(exportRows, `vendite_${start}_${end}.xlsx`)}>Excel</Button>
             <Button size="slim" onClick={() => window.print()}>Stampa</Button>
-          </InlineStack>
         </InlineStack>
 
         {/* KPI */}
@@ -462,7 +474,6 @@ export default function Vendite() {
             )}
           </BlockStack>
         </Card>
-      </BlockStack>
 
       {/* Modal dettaglio ordine */}
       {selectedOrder && (
@@ -503,6 +514,6 @@ export default function Vendite() {
           </Modal.Section>
         </Modal>
       )}
-    </Page>
+    </>
   );
 }
