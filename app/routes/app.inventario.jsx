@@ -16,7 +16,7 @@ import { formatCurrency } from "../utils/format";
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const snapshotDate = url.searchParams.get("snapshot") || new Date().toISOString().slice(0, 10);
+  const snapshotDate = url.searchParams.get("snapshot") || null;
 
   const dataPromise = (async () => {
     const products = await fetchProducts(admin);
@@ -522,7 +522,7 @@ function InventarioContent({ data }) {
 function SnapshotSection() {
   const { snapshot, snapshotDate } = useLoaderData();
   const navigate = useNavigate();
-  const [date, setDate] = useState(snapshotDate || "");
+  const [date, setDate] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
 
   return (
     <Card>
