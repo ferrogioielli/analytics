@@ -1,4 +1,4 @@
-import { useLoaderData, Await } from "@remix-run/react";
+import { useLoaderData, useNavigate, Await } from "@remix-run/react";
 import { defer } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
@@ -10,11 +10,13 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
-import { fetchProducts } from "../utils/shopify.server";
+import { fetchProducts, fetchInventorySnapshot } from "../utils/shopify.server";
 import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const snapshotDate = url.searchParams.get("snapshot") || null;
 
   const dataPromise = (async () => {
     const products = await fetchProducts(admin);
@@ -55,7 +57,12 @@ export const loader = async ({ request }) => {
     return { variants, vendors, types, allTags };
   })();
 
-  return defer({ data: dataPromise });
+  // Snapshot storico: se richiesto, lancia in parallelo
+  const snapshotPromise = snapshotDate
+    ? fetchInventorySnapshot(admin, snapshotDate)
+    : Promise.resolve(null);
+
+  return defer({ data: dataPromise, snapshot: snapshotPromise, snapshotDate });
 };
 
 function exportCSV(rows, filename) {
@@ -508,6 +515,95 @@ function InventarioContent({ data }) {
   );
 }
 
+// ─── SNAPSHOT STORICO ─────────────────────────────────────────────────────────
+function SnapshotSection() {
+  const { snapshot, snapshotDate } = useLoaderData();
+  const navigate = useNavigate();
+  const [date, setDate] = useState(snapshotDate || "");
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <Text as="h2" variant="headingMd">Inventario a una data specifica</Text>
+        <InlineStack gap="200" blockAlign="end" wrap>
+          <div style={{ minWidth: 180 }}>
+            <TextField label="Data" type="date" value={date} onChange={setDate} autoComplete="off" />
+          </div>
+          <div style={{ paddingTop: 22 }}>
+            <Button variant="primary" onClick={() => date && navigate(`?snapshot=${date}`)}>Vedi</Button>
+          </div>
+          {snapshotDate && (
+            <div style={{ paddingTop: 22 }}>
+              <Button plain onClick={() => navigate("/app/inventario")}>Cancella</Button>
+            </div>
+          )}
+        </InlineStack>
+
+        {snapshotDate && (
+          <Suspense fallback={
+            <div style={{ padding: "20px 0" }}>
+              <InlineStack align="center"><Text as="p" tone="subdued">Caricamento dati storici...</Text></InlineStack>
+            </div>
+          }>
+            <Await resolve={snapshot}>
+              {(snap) => snap ? <SnapshotResults data={snap} date={snapshotDate} /> : (
+                <Text as="p" tone="subdued">Nessun dato disponibile per questa data.</Text>
+              )}
+            </Await>
+          </Suspense>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function SnapshotResults({ data, date }) {
+  const { totals, byBrand } = data;
+  if (totals.units === 0 && totals.costValue === 0) {
+    return <Text as="p" tone="subdued">Nessun dato di inventario disponibile per il {new Date(date).toLocaleDateString("it-IT")}.</Text>;
+  }
+  return (
+    <BlockStack gap="400">
+      <Text as="p" variant="bodySm" tone="subdued">
+        Dati al {new Date(date).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })}
+      </Text>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        <Card>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Pezzi in stock</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{totals.units.toLocaleString("it-IT")}</Text>
+          </BlockStack>
+        </Card>
+        <Card>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Valore (costo)</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(totals.costValue)}</Text>
+          </BlockStack>
+        </Card>
+        <Card>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Valore (vendita)</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(totals.retailValue)}</Text>
+          </BlockStack>
+        </Card>
+      </div>
+
+      {byBrand.length > 0 && (
+        <DataTable
+          columnContentTypes={["text", "numeric", "numeric", "numeric"]}
+          headings={["Brand", "Pezzi", "Valore costo", "Valore vendita"]}
+          rows={byBrand.map((b) => [
+            b.brand,
+            b.units.toLocaleString("it-IT"),
+            formatCurrency(b.costValue),
+            formatCurrency(b.retailValue),
+          ])}
+        />
+      )}
+    </BlockStack>
+  );
+}
+
 export default function Inventario() {
   const { data } = useLoaderData();
 
@@ -515,6 +611,7 @@ export default function Inventario() {
     <Page title="Inventario">
       <TitleBar title="Inventario" />
       <BlockStack gap="500">
+        <SnapshotSection />
         <Suspense fallback={<LoadingSkeleton />}>
           <Await resolve={data}>
             {(resolved) => <InventarioContent data={resolved} />}

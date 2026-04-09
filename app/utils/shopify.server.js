@@ -193,6 +193,97 @@ function buildDateQuery(startDate, endDate) {
   return parts.join(" ") || undefined;
 }
 
+// ─── SHOPIFYQL ────────────────────────────────────────────────────────────────
+
+/**
+ * Esegue una query ShopifyQL e restituisce le righe come array di oggetti.
+ * Richiede scope read_analytics.
+ */
+export async function runShopifyQL(admin, query) {
+  const cacheKey = `ql:${query}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const response = await admin.graphql(
+    `#graphql
+    mutation shopifyqlQuery($query: String!) {
+      shopifyqlQuery(query: $query) {
+        __typename
+        ... on TableResponse {
+          tableData {
+            rowData
+            columns { name dataType }
+          }
+        }
+        parseErrors { code message range { start { line character } end { line character } } }
+      }
+    }`,
+    { variables: { query } },
+  );
+
+  const json = await response.json();
+  const result = json.data?.shopifyqlQuery;
+
+  if (result?.parseErrors?.length) {
+    console.error("ShopifyQL parse errors:", JSON.stringify(result.parseErrors));
+    return [];
+  }
+
+  const table = result?.tableData;
+  if (!table?.columns?.length || !table?.rowData?.length) return [];
+
+  const cols = table.columns.map((c) => c.name);
+  const rows = table.rowData.map((row) => {
+    const cells = JSON.parse(row);
+    const obj = {};
+    cols.forEach((col, i) => { obj[col] = cells[i]; });
+    return obj;
+  });
+
+  cacheSet(cacheKey, rows);
+  return rows;
+}
+
+/**
+ * Snapshot inventario a una data specifica via ShopifyQL.
+ * Ritorna { totals, byBrand[] }.
+ */
+export async function fetchInventorySnapshot(admin, date) {
+  const query = `FROM inventory
+    SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value
+    WHERE inventory_is_tracked = true
+    GROUP BY product_vendor WITH TOTALS
+    SINCE ${date} UNTIL ${date}
+    ORDER BY ending_inventory_value DESC
+    LIMIT 1000`;
+
+  const rows = await runShopifyQL(admin, query);
+  if (!rows.length) return { totals: { units: 0, costValue: 0, retailValue: 0 }, byBrand: [] };
+
+  const num = (v) => parseFloat(String(v).replace(/[^0-9.\-]/g, "")) || 0;
+
+  // La prima riga con vendor vuoto/null è il totale (WITH TOTALS)
+  const totalsRow = rows.find((r) => !r.product_vendor || r.product_vendor === "(not set)");
+  const brandRows = rows.filter((r) => r.product_vendor && r.product_vendor !== "(not set)");
+
+  const totals = totalsRow
+    ? { units: num(totalsRow.ending_inventory_units), costValue: num(totalsRow.ending_inventory_value), retailValue: num(totalsRow.ending_inventory_retail_value) }
+    : {
+        units: brandRows.reduce((s, r) => s + num(r.ending_inventory_units), 0),
+        costValue: brandRows.reduce((s, r) => s + num(r.ending_inventory_value), 0),
+        retailValue: brandRows.reduce((s, r) => s + num(r.ending_inventory_retail_value), 0),
+      };
+
+  const byBrand = brandRows.map((r) => ({
+    brand: r.product_vendor,
+    units: num(r.ending_inventory_units),
+    costValue: num(r.ending_inventory_value),
+    retailValue: num(r.ending_inventory_retail_value),
+  }));
+
+  return { totals, byBrand };
+}
+
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
 
 const PRODUCT_FIELDS = `
