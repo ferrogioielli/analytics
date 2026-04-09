@@ -1,6 +1,6 @@
-import { useLoaderData, useNavigate } from "@remix-run/react";
-import { json } from "@remix-run/node";
-import { useState, useMemo, useEffect } from "react";
+import { useLoaderData, useNavigate, Await } from "@remix-run/react";
+import { defer } from "@remix-run/node";
+import { useState, useMemo, useEffect, Suspense } from "react";
 import {
   Page, Layout, Card, BlockStack, InlineStack, Text, Button, DataTable, Badge, TextField,
 } from "@shopify/polaris";
@@ -20,76 +20,77 @@ export const loader = async ({ request }) => {
   const start = url.searchParams.get("start") || daysAgo(7);
   const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
 
-  const [products, orders] = await Promise.all([
-    fetchProducts(admin),
-    fetchOrders(admin, { startDate: start, endDate: end }),
-  ]);
+  const dataPromise = (async () => {
+    const [products, orders] = await Promise.all([
+      fetchProducts(admin),
+      fetchOrders(admin, { startDate: start, endDate: end }),
+    ]);
 
-  // SKU → unitCost map
-  const skuCostMap = new Map();
-  for (const p of products) {
-    for (const edge of p.variants.edges) {
-      const v = edge.node;
-      const cost = parseFloat(v.inventoryItem?.unitCost?.amount || 0);
-      if (v.sku && cost > 0) skuCostMap.set(v.sku, cost);
-    }
-  }
-
-  // Aggregate revenue + cost per product from orders
-  const productMap = new Map();
-  for (const order of orders) {
-    for (const edge of order.lineItems.edges) {
-      const item = edge.node;
-      const product = item.variant?.product;
-      if (!product) continue;
-      const sku = item.variant?.sku || "";
-      const unitCost = skuCostMap.get(sku) || 0;
-      const revenue = parseFloat(item.originalTotalSet?.shopMoney?.amount || 0);
-      const qty = item.quantity;
-
-      const id = product.id;
-      if (!productMap.has(id)) {
-        productMap.set(id, { id, title: product.title, vendor: product.vendor || "", revenue: 0, totalCost: 0, units: 0, hasCost: false });
+    const skuCostMap = new Map();
+    for (const p of products) {
+      for (const edge of p.variants.edges) {
+        const v = edge.node;
+        const cost = parseFloat(v.inventoryItem?.unitCost?.amount || 0);
+        if (v.sku && cost > 0) skuCostMap.set(v.sku, cost);
       }
-      const e = productMap.get(id);
-      e.revenue += revenue;
-      e.totalCost += unitCost * qty;
-      e.units += qty;
-      if (unitCost > 0) e.hasCost = true;
     }
-  }
 
-  const productList = Array.from(productMap.values()).map((p) => ({
-    ...p,
-    profit: p.revenue - p.totalCost,
-    margin: p.hasCost && p.revenue > 0 ? ((p.revenue - p.totalCost) / p.revenue) * 100 : null,
-  })).sort((a, b) => b.profit - a.profit);
+    const productMap = new Map();
+    for (const order of orders) {
+      for (const edge of order.lineItems.edges) {
+        const item = edge.node;
+        const product = item.variant?.product;
+        if (!product) continue;
+        const sku = item.variant?.sku || "";
+        const unitCost = skuCostMap.get(sku) || 0;
+        const revenue = parseFloat(item.originalTotalSet?.shopMoney?.amount || 0);
+        const qty = item.quantity;
 
-  // Brand summary
-  const brandMap = new Map();
-  for (const p of productList) {
-    const brand = p.vendor || "—";
-    if (!brandMap.has(brand)) brandMap.set(brand, { brand, revenue: 0, totalCost: 0, units: 0, hasCost: false });
-    const b = brandMap.get(brand);
-    b.revenue += p.revenue;
-    b.totalCost += p.totalCost;
-    b.units += p.units;
-    if (p.hasCost) b.hasCost = true;
-  }
-  const brandList = Array.from(brandMap.values()).map((b) => ({
-    ...b,
-    profit: b.revenue - b.totalCost,
-    margin: b.hasCost && b.revenue > 0 ? ((b.revenue - b.totalCost) / b.revenue) * 100 : null,
-  })).sort((a, b) => b.profit - a.profit);
+        const id = product.id;
+        if (!productMap.has(id)) {
+          productMap.set(id, { id, title: product.title, vendor: product.vendor || "", revenue: 0, totalCost: 0, units: 0, hasCost: false });
+        }
+        const e = productMap.get(id);
+        e.revenue += revenue;
+        e.totalCost += unitCost * qty;
+        e.units += qty;
+        if (unitCost > 0) e.hasCost = true;
+      }
+    }
 
-  const withCost = productList.filter((p) => p.hasCost);
-  const totalProfit = withCost.reduce((s, p) => s + p.profit, 0);
-  const totalCostRevenue = withCost.reduce((s, p) => s + p.revenue, 0);
-  const avgMargin = totalCostRevenue > 0 ? (totalProfit / totalCostRevenue) * 100 : null;
-  const noCostCount = productList.filter((p) => !p.hasCost).length;
-  const currency = orders[0]?.totalPriceSet?.shopMoney?.currencyCode || "EUR";
+    const productList = Array.from(productMap.values()).map((p) => ({
+      ...p,
+      profit: p.revenue - p.totalCost,
+      margin: p.hasCost && p.revenue > 0 ? ((p.revenue - p.totalCost) / p.revenue) * 100 : null,
+    })).sort((a, b) => b.profit - a.profit);
 
-  return json({ productList, brandList, totalProfit, avgMargin, noCostCount, start, end, currency });
+    const brandMap = new Map();
+    for (const p of productList) {
+      const brand = p.vendor || "—";
+      if (!brandMap.has(brand)) brandMap.set(brand, { brand, revenue: 0, totalCost: 0, units: 0, hasCost: false });
+      const b = brandMap.get(brand);
+      b.revenue += p.revenue;
+      b.totalCost += p.totalCost;
+      b.units += p.units;
+      if (p.hasCost) b.hasCost = true;
+    }
+    const brandList = Array.from(brandMap.values()).map((b) => ({
+      ...b,
+      profit: b.revenue - b.totalCost,
+      margin: b.hasCost && b.revenue > 0 ? ((b.revenue - b.totalCost) / b.revenue) * 100 : null,
+    })).sort((a, b) => b.profit - a.profit);
+
+    const withCost = productList.filter((p) => p.hasCost);
+    const totalProfit = withCost.reduce((s, p) => s + p.profit, 0);
+    const totalCostRevenue = withCost.reduce((s, p) => s + p.revenue, 0);
+    const avgMargin = totalCostRevenue > 0 ? (totalProfit / totalCostRevenue) * 100 : null;
+    const noCostCount = productList.filter((p) => !p.hasCost).length;
+    const currency = orders[0]?.totalPriceSet?.shopMoney?.currencyCode || "EUR";
+
+    return { productList, brandList, totalProfit, avgMargin, noCostCount, currency };
+  })();
+
+  return defer({ data: dataPromise, start, end });
 };
 
 function exportCSV(rows, filename) {
@@ -151,8 +152,40 @@ function DateRangePicker({ start, end }) {
   );
 }
 
-export default function Margini() {
-  const { productList, brandList, totalProfit, avgMargin, noCostCount, start, end, currency } = useLoaderData();
+// ─── LOADING SKELETON ─────────────────────────────────────────────────────────
+function LoadingSkeleton() {
+  const box = (w, h) => ({ width: w, height: h, background: "#f0f0f0", borderRadius: 6, animation: "pulse 1.5s infinite" });
+  return (
+    <>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
+      {/* KPI */}
+      <Layout>
+        {[1,2,3,4].map(i => (
+          <Layout.Section key={i} variant="oneQuarter">
+            <Card><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>
+          </Layout.Section>
+        ))}
+      </Layout>
+      {/* Charts */}
+      <Layout>
+        <Layout.Section variant="oneHalf">
+          <Card><BlockStack gap="300"><div style={box("50%",20)} /><div style={box("100%",320)} /></BlockStack></Card>
+        </Layout.Section>
+        <Layout.Section variant="oneHalf">
+          <Card><BlockStack gap="300"><div style={box("50%",20)} /><div style={box("100%",320)} /></BlockStack></Card>
+        </Layout.Section>
+      </Layout>
+      {/* Brand summary */}
+      <Card><BlockStack gap="300"><div style={box("40%",20)} /><div style={box("100%",200)} /></BlockStack></Card>
+      {/* Table */}
+      <Card><BlockStack gap="300"><div style={box("30%",20)} /><div style={box("100%",300)} /></BlockStack></Card>
+    </>
+  );
+}
+
+// ─── MAIN CONTENT ─────────────────────────────────────────────────────────────
+function MarginiContent({ data, start, end }) {
+  const { productList, brandList, totalProfit, avgMargin, noCostCount, currency } = data;
   const [sortCol, setSortCol] = useState(3);
   const [sortDir, setSortDir] = useState("descending");
 
@@ -202,158 +235,168 @@ export default function Margini() {
   }));
 
   return (
+    <>
+      <InlineStack align="end" gap="200">
+        <Button size="slim" onClick={() => exportCSV(exportRows, `margini_${start}_${end}.csv`)}>CSV</Button>
+        <Button size="slim" onClick={() => exportExcel(exportRows, `margini_${start}_${end}.xlsx`)}>Excel</Button>
+      </InlineStack>
+
+      {noCostCount > 0 && (
+        <Card>
+          <Text as="p" variant="bodySm" tone="subdued">
+            ⚠ {noCostCount} {noCostCount === 1 ? "prodotto senza" : "prodotti senza"} costo unitario in Shopify — esclusi dal calcolo del profitto.
+          </Text>
+        </Card>
+      )}
+
+      {/* KPI */}
+      <Layout>
+        <Layout.Section variant="oneQuarter">
+          <Card><BlockStack gap="100">
+            <span title="Fatturato totale meno costi dei prodotti venduti nel periodo. Richiede il costo unitario impostato in Shopify." style={{ cursor: "help" }}>
+              <Text as="p" variant="bodySm" tone="subdued">Profitto totale periodo ⓘ</Text>
+            </span>
+            <Text as="p" variant="headingLg" fontWeight="bold">
+              <span style={{ color: totalProfit >= 0 ? "#008060" : "#d82c0d" }}>{formatCurrency(totalProfit, currency)}</span>
+            </Text>
+          </BlockStack></Card>
+        </Layout.Section>
+        <Layout.Section variant="oneQuarter">
+          <Card><BlockStack gap="100">
+            <span title="(Fatturato - Costi) / Fatturato, pesato sul volume venduto. Verde ≥40%, giallo 20–40%, rosso <20%." style={{ cursor: "help" }}>
+              <Text as="p" variant="bodySm" tone="subdued">Margine medio ponderato ⓘ</Text>
+            </span>
+            <Text as="p" variant="headingLg" fontWeight="bold">
+              <span style={{ color: avgMargin === null ? undefined : avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060" }}>
+                {avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—"}
+              </span>
+            </Text>
+          </BlockStack></Card>
+        </Layout.Section>
+        <Layout.Section variant="oneQuarter">
+          <Card><BlockStack gap="100">
+            <span title="Il prodotto con il maggior profitto assoluto nel periodo (non margine %)." style={{ cursor: "help" }}>
+              <Text as="p" variant="bodySm" tone="subdued">Prodotto più redditizio ⓘ</Text>
+            </span>
+            <Text as="p" variant="headingMd" fontWeight="bold">{topProduct?.title || "—"}</Text>
+            {topProduct && <Text as="p" variant="bodySm" tone="subdued">{formatCurrency(topProduct.profit, currency)}</Text>}
+          </BlockStack></Card>
+        </Layout.Section>
+        <Layout.Section variant="oneQuarter">
+          <Card><BlockStack gap="100">
+            <span title="Il brand con il maggior profitto assoluto nel periodo." style={{ cursor: "help" }}>
+              <Text as="p" variant="bodySm" tone="subdued">Brand più redditizio ⓘ</Text>
+            </span>
+            <Text as="p" variant="headingMd" fontWeight="bold">{topBrand?.brand || "—"}</Text>
+            {topBrand && <Text as="p" variant="bodySm" tone="subdued">{formatCurrency(topBrand.profit, currency)}</Text>}
+          </BlockStack></Card>
+        </Layout.Section>
+      </Layout>
+
+      {/* Grafici */}
+      <Layout>
+        <Layout.Section variant="oneHalf">
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Top 15 prodotti per profitto</Text>
+              {top15Revenue.length === 0 ? (
+                <Text as="p" tone="subdued">Nessun dato nel periodo.</Text>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={top15Revenue} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `€${v.toFixed(0)}`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={160} />
+                    <Tooltip formatter={(v) => formatCurrency(v, currency)} />
+                    <Bar dataKey="profitto" name="Profitto" fill="#008060" radius={[0, 3, 3, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section variant="oneHalf">
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Margine % per brand</Text>
+              {brandChartData.length === 0 ? (
+                <Text as="p" tone="subdued">Nessun dato nel periodo.</Text>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={brandChartData} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={120} />
+                    <Tooltip formatter={(v) => v.toFixed(1) + "%"} />
+                    <ReferenceLine x={40} stroke="#008060" strokeDasharray="4 4" label={{ value: "Obiettivo 40%", position: "insideTopRight", fontSize: 10, fill: "#008060" }} />
+                    <Bar dataKey="margine" name="Margine %" radius={[0, 3, 3, 0]}>
+                      {brandChartData.map((b, i) => (
+                        <Cell key={i} fill={b.margine >= 40 ? "#008060" : b.margine >= 20 ? "#FFB400" : "#E74C3C"} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+
+      {/* Riepilogo brand */}
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingMd">Riepilogo per brand</Text>
+          <DataTable
+            columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
+            headings={["Brand", "Unità", "Fatturato", "Profitto", "Margine %"]}
+            rows={brandList.map((b) => [
+              b.brand,
+              b.units.toString(),
+              formatCurrency(b.revenue, currency),
+              b.hasCost ? formatCurrency(b.profit, currency) : "—",
+              <MarginBadge key={b.brand} margin={b.margin} />,
+            ])}
+          />
+        </BlockStack>
+      </Card>
+
+      {/* Tabella prodotti */}
+      <Card>
+        <BlockStack gap="400">
+          <Text as="h2" variant="headingMd">Dettaglio prodotti ({productList.length})</Text>
+          {tableRows.length === 0 ? (
+            <Text as="p" tone="subdued">Nessuna vendita nel periodo.</Text>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
+              headings={["Prodotto", "Brand", "Unità", "Fatturato", "Costo tot.", "Profitto", "Margine %"]}
+              rows={tableRows}
+              sortable={[false, false, true, true, true, true, true]}
+              defaultSortDirection="descending"
+              initialSortColumnIndex={3}
+              onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
+            />
+          )}
+        </BlockStack>
+      </Card>
+    </>
+  );
+}
+
+export default function Margini() {
+  const { data, start, end } = useLoaderData();
+
+  return (
     <Page title="Margini">
       <TitleBar title="Margini" />
       <BlockStack gap="500">
-
-        <InlineStack align="space-between" blockAlign="start" wrap>
-          <DateRangePicker start={start} end={end} />
-          <InlineStack gap="200">
-            <Button size="slim" onClick={() => exportCSV(exportRows, `margini_${start}_${end}.csv`)}>CSV</Button>
-            <Button size="slim" onClick={() => exportExcel(exportRows, `margini_${start}_${end}.xlsx`)}>Excel</Button>
-          </InlineStack>
-        </InlineStack>
-
-        {noCostCount > 0 && (
-          <Card>
-            <Text as="p" variant="bodySm" tone="subdued">
-              ⚠ {noCostCount} {noCostCount === 1 ? "prodotto senza" : "prodotti senza"} costo unitario in Shopify — esclusi dal calcolo del profitto.
-            </Text>
-          </Card>
-        )}
-
-        {/* KPI */}
-        <Layout>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <span title="Fatturato totale meno costi dei prodotti venduti nel periodo. Richiede il costo unitario impostato in Shopify." style={{ cursor: "help" }}>
-                <Text as="p" variant="bodySm" tone="subdued">Profitto totale periodo ⓘ</Text>
-              </span>
-              <Text as="p" variant="headingLg" fontWeight="bold">
-                <span style={{ color: totalProfit >= 0 ? "#008060" : "#d82c0d" }}>{formatCurrency(totalProfit, currency)}</span>
-              </Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <span title="(Fatturato - Costi) / Fatturato, pesato sul volume venduto. Verde ≥40%, giallo 20–40%, rosso <20%." style={{ cursor: "help" }}>
-                <Text as="p" variant="bodySm" tone="subdued">Margine medio ponderato ⓘ</Text>
-              </span>
-              <Text as="p" variant="headingLg" fontWeight="bold">
-                <span style={{ color: avgMargin === null ? undefined : avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060" }}>
-                  {avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—"}
-                </span>
-              </Text>
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <span title="Il prodotto con il maggior profitto assoluto nel periodo (non margine %)." style={{ cursor: "help" }}>
-                <Text as="p" variant="bodySm" tone="subdued">Prodotto più redditizio ⓘ</Text>
-              </span>
-              <Text as="p" variant="headingMd" fontWeight="bold">{topProduct?.title || "—"}</Text>
-              {topProduct && <Text as="p" variant="bodySm" tone="subdued">{formatCurrency(topProduct.profit, currency)}</Text>}
-            </BlockStack></Card>
-          </Layout.Section>
-          <Layout.Section variant="oneQuarter">
-            <Card><BlockStack gap="100">
-              <span title="Il brand con il maggior profitto assoluto nel periodo." style={{ cursor: "help" }}>
-                <Text as="p" variant="bodySm" tone="subdued">Brand più redditizio ⓘ</Text>
-              </span>
-              <Text as="p" variant="headingMd" fontWeight="bold">{topBrand?.brand || "—"}</Text>
-              {topBrand && <Text as="p" variant="bodySm" tone="subdued">{formatCurrency(topBrand.profit, currency)}</Text>}
-            </BlockStack></Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* Grafici */}
-        <Layout>
-          <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Top 15 prodotti per profitto</Text>
-                {top15Revenue.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessun dato nel periodo.</Text>
-                ) : (
-                  <ResponsiveContainer width="100%" height={320}>
-                    <BarChart data={top15Revenue} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `€${v.toFixed(0)}`} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={160} />
-                      <Tooltip formatter={(v) => formatCurrency(v, currency)} />
-                      <Bar dataKey="profitto" name="Profitto" fill="#008060" radius={[0, 3, 3, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-
-          <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Margine % per brand</Text>
-                {brandChartData.length === 0 ? (
-                  <Text as="p" tone="subdued">Nessun dato nel periodo.</Text>
-                ) : (
-                  <ResponsiveContainer width="100%" height={320}>
-                    <BarChart data={brandChartData} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={120} />
-                      <Tooltip formatter={(v) => v.toFixed(1) + "%"} />
-                      <ReferenceLine x={40} stroke="#008060" strokeDasharray="4 4" label={{ value: "Obiettivo 40%", position: "insideTopRight", fontSize: 10, fill: "#008060" }} />
-                      <Bar dataKey="margine" name="Margine %" radius={[0, 3, 3, 0]}>
-                        {brandChartData.map((b, i) => (
-                          <Cell key={i} fill={b.margine >= 40 ? "#008060" : b.margine >= 20 ? "#FFB400" : "#E74C3C"} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* Riepilogo brand */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Riepilogo per brand</Text>
-            <DataTable
-              columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
-              headings={["Brand", "Unità", "Fatturato", "Profitto", "Margine %"]}
-              rows={brandList.map((b) => [
-                b.brand,
-                b.units.toString(),
-                formatCurrency(b.revenue, currency),
-                b.hasCost ? formatCurrency(b.profit, currency) : "—",
-                <MarginBadge key={b.brand} margin={b.margin} />,
-              ])}
-            />
-          </BlockStack>
-        </Card>
-
-        {/* Tabella prodotti */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Dettaglio prodotti ({productList.length})</Text>
-            {tableRows.length === 0 ? (
-              <Text as="p" tone="subdued">Nessuna vendita nel periodo.</Text>
-            ) : (
-              <DataTable
-                columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-                headings={["Prodotto", "Brand", "Unità", "Fatturato", "Costo tot.", "Profitto", "Margine %"]}
-                rows={tableRows}
-                sortable={[false, false, true, true, true, true, true]}
-                defaultSortDirection="descending"
-                initialSortColumnIndex={3}
-                onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
-              />
-            )}
-          </BlockStack>
-        </Card>
-
+        <DateRangePicker start={start} end={end} />
+        <Suspense fallback={<LoadingSkeleton />}>
+          <Await resolve={data}>
+            {(resolved) => <MarginiContent data={resolved} start={start} end={end} />}
+          </Await>
+        </Suspense>
       </BlockStack>
     </Page>
   );

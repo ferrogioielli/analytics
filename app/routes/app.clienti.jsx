@@ -1,6 +1,6 @@
-import { useLoaderData } from "@remix-run/react";
-import { json } from "@remix-run/node";
-import { useState, useMemo, useEffect } from "react";
+import { useLoaderData, Await } from "@remix-run/react";
+import { defer } from "@remix-run/node";
+import { useState, useMemo, useEffect, Suspense } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge, DataTable,
 } from "@shopify/polaris";
@@ -14,50 +14,49 @@ import { formatCurrency, formatDate, daysAgo } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
-  const today = new Date().toISOString().slice(0, 10);
 
-  // Carica tutti i clienti + ordini ultimi 30gg (per Top 10 per periodo)
-  const [customers, orders30] = await Promise.all([
-    fetchCustomers(admin),
-    fetchOrders(admin, { startDate: daysAgo(30), endDate: today }),
-  ]);
+  const dataPromise = (async () => {
+    const today = new Date().toISOString().slice(0, 10);
 
-  // Clienti abituali (>1 ordine)
-  const returning = customers.filter((c) => parseInt(c.numberOfOrders) > 1);
+    const [customers, orders30] = await Promise.all([
+      fetchCustomers(admin),
+      fetchOrders(admin, { startDate: daysAgo(30), endDate: today }),
+    ]);
 
-  // Nuovi ultimi 30gg (data registrazione)
-  const thirtyDaysAgo = daysAgo(30);
-  const newLast30 = customers.filter((c) => c.createdAt?.slice(0, 10) >= thirtyDaysAgo);
+    const returning = customers.filter((c) => parseInt(c.numberOfOrders) > 1);
 
-  // Spesa media per cliente (LTV = Lifetime Value = spesa totale media storica)
-  const totalSpent = customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0);
-  const ltv = customers.length > 0 ? totalSpent / customers.length : 0;
-  const currency = customers[0]?.amountSpent?.currencyCode || "EUR";
+    const thirtyDaysAgo = daysAgo(30);
+    const newLast30 = customers.filter((c) => c.createdAt?.slice(0, 10) >= thirtyDaysAgo);
 
-  // Nuovi clienti per mese (ultimi 12)
-  const monthMap = new Map();
-  for (const c of customers) {
-    const month = c.createdAt?.slice(0, 7);
-    if (!month) continue;
-    monthMap.set(month, (monthMap.get(month) || 0) + 1);
-  }
-  const newByMonth = Array.from(monthMap.entries())
-    .map(([month, count]) => ({ month, count }))
-    .sort((a, b) => a.month.localeCompare(b.month))
-    .slice(-12);
+    const totalSpent = customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0);
+    const ltv = customers.length > 0 ? totalSpent / customers.length : 0;
+    const currency = customers[0]?.amountSpent?.currencyCode || "EUR";
 
-  // Ordini 30gg serializzati (solo i campi necessari per Top 10 per periodo)
-  const ordersSummary = orders30.map((o) => ({
-    createdAt: o.createdAt,
-    amount: parseFloat(o.totalPriceSet?.shopMoney?.amount || 0),
-    customerId: o.customer?.id || null,
-    customerName: o.customer
-      ? `${o.customer.firstName || ""} ${o.customer.lastName || ""}`.trim() || o.customer.email || "—"
-      : null,
-    customerEmail: o.customer?.email || "—",
-  })).filter((o) => o.customerId);
+    const monthMap = new Map();
+    for (const c of customers) {
+      const month = c.createdAt?.slice(0, 7);
+      if (!month) continue;
+      monthMap.set(month, (monthMap.get(month) || 0) + 1);
+    }
+    const newByMonth = Array.from(monthMap.entries())
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .slice(-12);
 
-  return json({ customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency });
+    const ordersSummary = orders30.map((o) => ({
+      createdAt: o.createdAt,
+      amount: parseFloat(o.totalPriceSet?.shopMoney?.amount || 0),
+      customerId: o.customer?.id || null,
+      customerName: o.customer
+        ? `${o.customer.firstName || ""} ${o.customer.lastName || ""}`.trim() || o.customer.email || "—"
+        : null,
+      customerEmail: o.customer?.email || "—",
+    })).filter((o) => o.customerId);
+
+    return { customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency };
+  })();
+
+  return defer({ data: dataPromise });
 };
 
 function exportCSV(rows, filename) {
@@ -79,7 +78,6 @@ function exportExcel(rows, filename) {
   });
 }
 
-// Aggrega ordini per cliente e restituisce top N
 function topByOrders(orders, n = 10) {
   const map = new Map();
   for (const o of orders) {
@@ -100,7 +98,6 @@ const RFM_SEGMENTS = [
   { key: "Persi",       color: "#888888", tone: "critical", label: "Perso",       desc: "Nessun acquisto da oltre 180 giorni." },
 ];
 
-// Componente lista clienti (stessa grafica Top 10)
 function ClientiList({ items, currency, emptyMsg, showInactivo = false }) {
   if (!items.length) return <Text as="p" tone="subdued">{emptyMsg}</Text>;
   return (
@@ -129,15 +126,39 @@ function ClientiList({ items, currency, emptyMsg, showInactivo = false }) {
   );
 }
 
-export default function Clienti() {
-  const { customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency } = useLoaderData();
+// ─── LOADING SKELETON ─────────────────────────────────────────────────────────
+function LoadingSkeleton() {
+  const box = (w, h) => ({ width: w, height: h, background: "#f0f0f0", borderRadius: 6, animation: "pulse 1.5s infinite" });
+  return (
+    <>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
+      {/* KPI cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        {[1,2,3,4].map(i => (
+          <Card key={i}><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>
+        ))}
+      </div>
+      {/* Top 10 */}
+      <Card><BlockStack gap="300"><div style={box("40%",20)} /><div style={box("100%",180)} /></BlockStack></Card>
+      {/* Clienti abituali */}
+      <Card><BlockStack gap="300"><div style={box("35%",20)} /><div style={box("100%",180)} /></BlockStack></Card>
+      {/* Chart */}
+      <Card><BlockStack gap="300"><div style={box("50%",20)} /><div style={box("100%",200)} /></BlockStack></Card>
+      {/* Table */}
+      <Card><BlockStack gap="300"><div style={box("30%",20)} /><div style={box("100%",300)} /></BlockStack></Card>
+    </>
+  );
+}
+
+// ─── MAIN CONTENT ─────────────────────────────────────────────────────────────
+function ClientiContent({ data }) {
+  const { customers, returning, newLast30, ltv, newByMonth, ordersSummary, currency } = data;
 
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
-  const [top10Period, setTop10Period] = useState("settimana"); // oggi | settimana | mese | tutto
+  const [top10Period, setTop10Period] = useState("settimana");
   const [habitualPeriod, setHabitualPeriod] = useState("settimana");
 
-  // ── RFM segmentation ──
   const rfmSegments = useMemo(() => {
     const avgSpent = customers.length > 0
       ? customers.reduce((s, c) => s + parseFloat(c.amountSpent?.amount || 0), 0) / customers.length
@@ -159,7 +180,6 @@ export default function Clienti() {
     });
   }, [customers]);
 
-  // ── Top 10 filtrato per periodo ──
   const top10 = useMemo(() => {
     if (top10Period === "tutto") {
       return [...customers]
@@ -183,7 +203,6 @@ export default function Clienti() {
     return topByOrders(filtered, 10);
   }, [customers, ordersSummary, top10Period]);
 
-  // ── Clienti abituali (Champions + Abituali) filtrati per periodo ──
   const habitual = useMemo(() => {
     const returningCustomers = rfmSegments.filter((c) => c.segment === "Champions" || c.segment === "Abituali");
     if (habitualPeriod === "tutto") {
@@ -197,7 +216,6 @@ export default function Clienti() {
           orders: parseInt(c.numberOfOrders) || 0,
         }));
     }
-    // Filtra ordini per periodo
     const todayStr = new Date().toISOString().slice(0, 10);
     const filteredOrders = ordersSummary.filter((o) => {
       const d = o.createdAt.slice(0, 10);
@@ -206,13 +224,11 @@ export default function Clienti() {
       if (habitualPeriod === "mese") return d >= daysAgo(30);
       return true;
     });
-    // Solo ordini di clienti abituali
     const returningIds = new Set(returningCustomers.map((c) => c.id));
     const habitualOrders = filteredOrders.filter((o) => returningIds.has(o.customerId));
     return topByOrders(habitualOrders, 10);
   }, [rfmSegments, ordersSummary, habitualPeriod]);
 
-  // ── Tabella tutti i clienti ──
   const totalPages = Math.ceil(rfmSegments.length / PAGE_SIZE);
   const pageData = rfmSegments.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
@@ -246,141 +262,153 @@ export default function Clienti() {
   ];
 
   return (
+    <>
+      {/* ── HEADER export ── */}
+      <InlineStack align="end">
+        <InlineStack gap="200">
+          <Button size="slim" onClick={() => exportCSV(exportRows, "clienti.csv")}>CSV</Button>
+          <Button size="slim" onClick={() => exportExcel(exportRows, "clienti.xlsx")}>Excel</Button>
+        </InlineStack>
+      </InlineStack>
+
+      {/* ── KPI riga unica ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <Card>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Clienti totali</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{customers.length}</Text>
+          </BlockStack>
+        </Card>
+        <Card>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Abituali (≥2 ordini)</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{returning.length}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{customers.length > 0 ? ((returning.length / customers.length) * 100).toFixed(0) : 0}% del totale</Text>
+          </BlockStack>
+        </Card>
+        <Card>
+          <BlockStack gap="100">
+            <span title="Spesa media storica per cliente (Lifetime Value): somma totale spesa / numero clienti" style={{ cursor: "help" }}>
+              <Text as="p" variant="bodySm" tone="subdued">Spesa media cliente ⓘ</Text>
+            </span>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(ltv, currency)}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">media storica per cliente</Text>
+          </BlockStack>
+        </Card>
+        <Card>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Nuovi ultimi 30gg</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{newLast30.length}</Text>
+          </BlockStack>
+        </Card>
+      </div>
+
+      {/* ── TOP 10 ── */}
+      <Card>
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="center" wrap>
+            <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
+            <InlineStack gap="100">
+              {periodLabels.map(({ key, label }) => (
+                <Button key={key} size="slim"
+                  variant={top10Period === key ? "primary" : "plain"}
+                  onClick={() => setTop10Period(key)}>
+                  {label}
+                </Button>
+              ))}
+            </InlineStack>
+          </InlineStack>
+          <ClientiList items={top10} currency={currency} emptyMsg="Nessun ordine nel periodo selezionato." />
+        </BlockStack>
+      </Card>
+
+      {/* ── CLIENTI ABITUALI ── */}
+      <Card>
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="center" wrap>
+            <Text as="h2" variant="headingMd">Clienti abituali</Text>
+            <InlineStack gap="100">
+              {periodLabels.map(({ key, label }) => (
+                <Button key={key} size="slim"
+                  variant={habitualPeriod === key ? "primary" : "plain"}
+                  onClick={() => setHabitualPeriod(key)}>
+                  {label}
+                </Button>
+              ))}
+            </InlineStack>
+          </InlineStack>
+          <ClientiList items={habitual} currency={currency} emptyMsg="Nessun cliente abituale nel periodo." />
+        </BlockStack>
+      </Card>
+
+      {/* ── NUOVI CLIENTI PER MESE ── */}
+      {newByMonth.length > 0 && (
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Nuovi clienti per mese (ultimi 12)</Text>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={newByMonth} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="count" name="Nuovi clienti" fill="#008060" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </BlockStack>
+        </Card>
+      )}
+
+      {/* ── TABELLA TUTTI I CLIENTI ── */}
+      <Card>
+        <BlockStack gap="400">
+          <Text as="h2" variant="headingMd">Tutti i clienti ({rfmSegments.length})</Text>
+
+          {totalPages > 1 && (
+            <InlineStack align="space-between" blockAlign="center">
+              <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
+              <Text as="span" variant="bodySm">
+                Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rfmSegments.length)} di {rfmSegments.length})
+              </Text>
+              <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
+            </InlineStack>
+          )}
+
+          {tableRows.length === 0 ? (
+            <Text as="p" tone="subdued">Nessun cliente trovato.</Text>
+          ) : (
+            <DataTable
+              columnContentTypes={["text","text","text","numeric","numeric","text","text"]}
+              headings={["Nome","Email","Segmento","Ordini","Spesa totale","Ultimo ordine","Inattivo da"]}
+              rows={tableRows}
+            />
+          )}
+
+          {totalPages > 1 && (
+            <InlineStack align="center" gap="200" blockAlign="center">
+              <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
+              <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
+              <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
+            </InlineStack>
+          )}
+        </BlockStack>
+      </Card>
+    </>
+  );
+}
+
+export default function Clienti() {
+  const { data } = useLoaderData();
+
+  return (
     <Page title="Clienti">
       <TitleBar title="Clienti" />
       <BlockStack gap="500">
-
-        {/* ── HEADER export ── */}
-        <InlineStack align="end">
-          <InlineStack gap="200">
-            <Button size="slim" onClick={() => exportCSV(exportRows, "clienti.csv")}>CSV</Button>
-            <Button size="slim" onClick={() => exportExcel(exportRows, "clienti.xlsx")}>Excel</Button>
-          </InlineStack>
-        </InlineStack>
-
-        {/* ── KPI riga unica ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Clienti totali</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{customers.length}</Text>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Abituali (≥2 ordini)</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{returning.length}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">{customers.length > 0 ? ((returning.length / customers.length) * 100).toFixed(0) : 0}% del totale</Text>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="100">
-              <span title="Spesa media storica per cliente (Lifetime Value): somma totale spesa / numero clienti" style={{ cursor: "help" }}>
-                <Text as="p" variant="bodySm" tone="subdued">Spesa media cliente ⓘ</Text>
-              </span>
-              <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(ltv, currency)}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">media storica per cliente</Text>
-            </BlockStack>
-          </Card>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Nuovi ultimi 30gg</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{newLast30.length}</Text>
-            </BlockStack>
-          </Card>
-        </div>
-
-        {/* ── TOP 10 ── */}
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center" wrap>
-              <Text as="h2" variant="headingMd">Top 10 clienti per spesa</Text>
-              <InlineStack gap="100">
-                {periodLabels.map(({ key, label }) => (
-                  <Button key={key} size="slim"
-                    variant={top10Period === key ? "primary" : "plain"}
-                    onClick={() => setTop10Period(key)}>
-                    {label}
-                  </Button>
-                ))}
-              </InlineStack>
-            </InlineStack>
-            <ClientiList items={top10} currency={currency} emptyMsg="Nessun ordine nel periodo selezionato." />
-          </BlockStack>
-        </Card>
-
-        {/* ── CLIENTI ABITUALI ── */}
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center" wrap>
-              <Text as="h2" variant="headingMd">Clienti abituali</Text>
-              <InlineStack gap="100">
-                {periodLabels.map(({ key, label }) => (
-                  <Button key={key} size="slim"
-                    variant={habitualPeriod === key ? "primary" : "plain"}
-                    onClick={() => setHabitualPeriod(key)}>
-                    {label}
-                  </Button>
-                ))}
-              </InlineStack>
-            </InlineStack>
-            <ClientiList items={habitual} currency={currency} emptyMsg="Nessun cliente abituale nel periodo." />
-          </BlockStack>
-        </Card>
-
-        {/* ── NUOVI CLIENTI PER MESE ── */}
-        {newByMonth.length > 0 && (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">Nuovi clienti per mese (ultimi 12)</Text>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={newByMonth} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="count" name="Nuovi clienti" fill="#008060" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </BlockStack>
-          </Card>
-        )}
-
-        {/* ── TABELLA TUTTI I CLIENTI ── */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Tutti i clienti ({rfmSegments.length})</Text>
-
-            {totalPages > 1 && (
-              <InlineStack align="space-between" blockAlign="center">
-                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
-                <Text as="span" variant="bodySm">
-                  Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rfmSegments.length)} di {rfmSegments.length})
-                </Text>
-                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
-              </InlineStack>
-            )}
-
-            {tableRows.length === 0 ? (
-              <Text as="p" tone="subdued">Nessun cliente trovato.</Text>
-            ) : (
-              <DataTable
-                columnContentTypes={["text","text","text","numeric","numeric","text","text"]}
-                headings={["Nome","Email","Segmento","Ordini","Spesa totale","Ultimo ordine","Inattivo da"]}
-                rows={tableRows}
-              />
-            )}
-
-            {totalPages > 1 && (
-              <InlineStack align="center" gap="200" blockAlign="center">
-                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
-                <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
-                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
-              </InlineStack>
-            )}
-          </BlockStack>
-        </Card>
-
+        <Suspense fallback={<LoadingSkeleton />}>
+          <Await resolve={data}>
+            {(resolved) => <ClientiContent data={resolved} />}
+          </Await>
+        </Suspense>
       </BlockStack>
     </Page>
   );

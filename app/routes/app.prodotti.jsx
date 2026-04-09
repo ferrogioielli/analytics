@@ -1,6 +1,6 @@
-import { useLoaderData } from "@remix-run/react";
-import { json } from "@remix-run/node";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useLoaderData, Await } from "@remix-run/react";
+import { defer } from "@remix-run/node";
+import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge, Link,
   DataTable, Select, Thumbnail, TextField, Popover, OptionList,
@@ -12,25 +12,28 @@ import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
-  const shop = session.shop; // es. "mionegozio.myshopify.com"
+  const shop = session.shop;
 
-  const products = await fetchProducts(admin);
+  const dataPromise = (async () => {
+    const products = await fetchProducts(admin);
 
-  // Distribuzione per brand
-  const brandMap = new Map();
-  for (const p of products) {
-    const v = p.vendor || "Senza brand";
-    brandMap.set(v, (brandMap.get(v) || 0) + 1);
-  }
-  const byBrand = Array.from(brandMap.entries())
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value);
+    const brandMap = new Map();
+    for (const p of products) {
+      const v = p.vendor || "Senza brand";
+      brandMap.set(v, (brandMap.get(v) || 0) + 1);
+    }
+    const byBrand = Array.from(brandMap.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
 
-  const vendors = [...new Set(products.map((p) => p.vendor).filter(Boolean))].sort();
-  const types = [...new Set(products.map((p) => p.productType).filter(Boolean))].sort();
-  const allTags = [...new Set(products.flatMap((p) => p.tags || []))].sort();
+    const vendors = [...new Set(products.map((p) => p.vendor).filter(Boolean))].sort();
+    const types = [...new Set(products.map((p) => p.productType).filter(Boolean))].sort();
+    const allTags = [...new Set(products.flatMap((p) => p.tags || []))].sort();
 
-  return json({ products, byBrand, vendors, types, allTags, shop });
+    return { products, byBrand, vendors, types, allTags };
+  })();
+
+  return defer({ data: dataPromise, shop });
 };
 
 function exportCSV(rows, filename) {
@@ -87,8 +90,31 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
 const PAGE_SIZE = 50;
 const SORT_KEYS = [null, "vendor", "productType", "status", "variantCount", "totalQty", "avgPrice"];
 
-export default function Prodotti() {
-  const { products, byBrand, vendors, types, allTags, shop } = useLoaderData();
+// ─── LOADING SKELETON ─────────────────────────────────────────────────────────
+function LoadingSkeleton() {
+  const box = (w, h) => ({ width: w, height: h, background: "#f0f0f0", borderRadius: 6, animation: "pulse 1.5s infinite" });
+  return (
+    <>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
+      {/* KPI cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        {[1,2,3,4].map(i => (
+          <Card key={i}><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>
+        ))}
+      </div>
+      {/* Brand distribution */}
+      <Card><BlockStack gap="300"><div style={box("40%",20)} /><div style={box("100%",200)} /></BlockStack></Card>
+      {/* Filters */}
+      <Card><BlockStack gap="300"><div style={box("20%",20)} /><div style={box("100%",60)} /></BlockStack></Card>
+      {/* Table */}
+      <Card><BlockStack gap="300"><div style={box("30%",20)} /><div style={box("100%",300)} /></BlockStack></Card>
+    </>
+  );
+}
+
+// ─── MAIN CONTENT ─────────────────────────────────────────────────────────────
+function ProdottiContent({ data, shop }) {
+  const { products, byBrand, vendors, types, allTags } = data;
 
   const [filterVendors, setFilterVendors] = useState(() => vendors);
   const [filterTypes, setFilterTypes] = useState(() => types);
@@ -156,7 +182,6 @@ export default function Prodotti() {
     const numericId = p.id.split("/").pop();
     const productUrl = `https://admin.shopify.com/store/${shopName}/products/${numericId}`;
     return [
-      // Immagine separata dal nome
       <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ flexShrink: 0 }}>
           {p.featuredImage?.url
@@ -208,177 +233,187 @@ export default function Prodotti() {
   ];
 
   return (
+    <>
+      {/* ── HEADER ── */}
+      <InlineStack align="end" blockAlign="center">
+        <InlineStack gap="200">
+          <Button size="slim" onClick={() => exportCSV(exportRows, "prodotti.csv")}>CSV</Button>
+          <Button size="slim" onClick={() => exportExcel(exportRows, "prodotti.xlsx")}>Excel</Button>
+        </InlineStack>
+      </InlineStack>
+
+      {/* ── KPI ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        {[
+          { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
+          { label: isFiltered ? "Attivi — filtrati" : "Prodotti attivi", value: filteredActive },
+          { label: isFiltered ? "Stock — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
+          { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
+        ].map(({ label, value }) => (
+          <Card key={label}>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+              <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
+            </BlockStack>
+          </Card>
+        ))}
+      </div>
+
+      {/* ── DISTRIBUZIONE BRAND ── */}
+      {byBrand.length > 0 && (
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px", alignItems: "start" }}>
+              <div>
+                {byBrand.slice(0, 35).map((b, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
+                    <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 1}.</span>
+                    <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                    <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                {byBrand.slice(35).map((b, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
+                    <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 36}.</span>
+                    <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                    <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </BlockStack>
+        </Card>
+      )}
+
+      {/* ── FILTRI ── */}
+      <Card>
+        <BlockStack gap="400">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="h2" variant="headingMd">Filtri</Text>
+            {isFiltered && (
+              <Button size="slim" plain onClick={resetFilters}>Azzera filtri</Button>
+            )}
+          </InlineStack>
+
+          <InlineStack gap="300" wrap blockAlign="start">
+            <div style={{ minWidth: 220 }}>
+              <TextField
+                label="Cerca" placeholder="Nome prodotto..."
+                value={search} onChange={setSearch} autoComplete="off"
+              />
+            </div>
+            <div style={{ minWidth: 180 }}>
+              <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
+            </div>
+          </InlineStack>
+
+          <InlineStack gap="300" wrap blockAlign="start">
+            {vendors.length > 0 && (
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Brand"
+                  allLabel="Tutti i brand"
+                  options={vendorOptionList}
+                  selected={filterVendors}
+                  onChange={setFilterVendors}
+                  allValues={vendors}
+                />
+              </div>
+            )}
+            {types.length > 0 && (
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Tipo prodotto"
+                  allLabel="Tutti i tipi"
+                  options={typeOptionList}
+                  selected={filterTypes}
+                  onChange={setFilterTypes}
+                  allValues={types}
+                />
+              </div>
+            )}
+            {allTags.length > 0 && (
+              <div style={{ minWidth: 200 }}>
+                <MultiSelect
+                  label="Tag"
+                  allLabel="Tutti i tag"
+                  options={tagOptionList}
+                  selected={filterTags}
+                  onChange={setFilterTags}
+                  allValues={allTags}
+                />
+              </div>
+            )}
+          </InlineStack>
+
+          {isFiltered && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {filtered.length} prodotti su {products.length} totali
+            </Text>
+          )}
+        </BlockStack>
+      </Card>
+
+      {/* ── TABELLA PRODOTTI ── */}
+      <Card>
+        <BlockStack gap="400">
+          <InlineStack align="space-between" blockAlign="center" wrap>
+            <Text as="h2" variant="headingMd">
+              Tutti i prodotti ({filtered.length}{isFiltered ? ` su ${products.length}` : ""})
+            </Text>
+            {totalPages > 1 && (
+              <InlineStack gap="200" blockAlign="center">
+                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
+                <Text as="span" variant="bodySm">
+                  Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} di {sorted.length})
+                </Text>
+                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
+              </InlineStack>
+            )}
+          </InlineStack>
+
+          {tableRows.length === 0 ? (
+            <Text as="p" tone="subdued">Nessun prodotto trovato con i filtri selezionati.</Text>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "numeric", "numeric", "numeric"]}
+              headings={["Prodotto", "Brand", "Tipo", "Status", "Varianti", "Stock", "Prezzo medio"]}
+              rows={tableRows}
+              sortable={[false, true, true, true, true, true, true]}
+              defaultSortDirection="ascending"
+              initialSortColumnIndex={0}
+              onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
+            />
+          )}
+
+          {totalPages > 1 && (
+            <InlineStack align="center" gap="200" blockAlign="center">
+              <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
+              <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
+              <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
+            </InlineStack>
+          )}
+        </BlockStack>
+      </Card>
+    </>
+  );
+}
+
+export default function Prodotti() {
+  const { data, shop } = useLoaderData();
+
+  return (
     <Page title="Prodotti">
       <TitleBar title="Prodotti" />
       <BlockStack gap="500">
-
-        {/* ── HEADER ── */}
-        <InlineStack align="end" blockAlign="center">
-          <InlineStack gap="200">
-            <Button size="slim" onClick={() => exportCSV(exportRows, "prodotti.csv")}>CSV</Button>
-            <Button size="slim" onClick={() => exportExcel(exportRows, "prodotti.xlsx")}>Excel</Button>
-          </InlineStack>
-        </InlineStack>
-
-        {/* ── KPI ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          {[
-            { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
-            { label: isFiltered ? "Attivi — filtrati" : "Prodotti attivi", value: filteredActive },
-            { label: isFiltered ? "Stock — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
-            { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
-          ].map(({ label, value }) => (
-            <Card key={label}>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-                <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
-              </BlockStack>
-            </Card>
-          ))}
-        </div>
-
-        {/* ── DISTRIBUZIONE BRAND ── */}
-        {byBrand.length > 0 && (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px", alignItems: "start" }}>
-                {/* Colonna sinistra: 1–35 */}
-                <div>
-                  {byBrand.slice(0, 35).map((b, i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
-                      <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 1}.</span>
-                      <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
-                      <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
-                    </div>
-                  ))}
-                </div>
-                {/* Colonna destra: 36+ */}
-                <div>
-                  {byBrand.slice(35).map((b, i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
-                      <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 36}.</span>
-                      <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
-                      <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </BlockStack>
-          </Card>
-        )}
-
-        {/* ── FILTRI ── */}
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Filtri</Text>
-              {isFiltered && (
-                <Button size="slim" plain onClick={resetFilters}>Azzera filtri</Button>
-              )}
-            </InlineStack>
-
-            <InlineStack gap="300" wrap blockAlign="start">
-              <div style={{ minWidth: 220 }}>
-                <TextField
-                  label="Cerca" placeholder="Nome prodotto..."
-                  value={search} onChange={setSearch} autoComplete="off"
-                />
-              </div>
-              <div style={{ minWidth: 180 }}>
-                <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
-              </div>
-            </InlineStack>
-
-            <InlineStack gap="300" wrap blockAlign="start">
-              {vendors.length > 0 && (
-                <div style={{ minWidth: 200 }}>
-                  <MultiSelect
-                    label="Brand"
-                    allLabel="Tutti i brand"
-                    options={vendorOptionList}
-                    selected={filterVendors}
-                    onChange={setFilterVendors}
-                    allValues={vendors}
-                  />
-                </div>
-              )}
-              {types.length > 0 && (
-                <div style={{ minWidth: 200 }}>
-                  <MultiSelect
-                    label="Tipo prodotto"
-                    allLabel="Tutti i tipi"
-                    options={typeOptionList}
-                    selected={filterTypes}
-                    onChange={setFilterTypes}
-                    allValues={types}
-                  />
-                </div>
-              )}
-              {allTags.length > 0 && (
-                <div style={{ minWidth: 200 }}>
-                  <MultiSelect
-                    label="Tag"
-                    allLabel="Tutti i tag"
-                    options={tagOptionList}
-                    selected={filterTags}
-                    onChange={setFilterTags}
-                    allValues={allTags}
-                  />
-                </div>
-              )}
-            </InlineStack>
-
-            {isFiltered && (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {filtered.length} prodotti su {products.length} totali
-              </Text>
-            )}
-          </BlockStack>
-        </Card>
-
-        {/* ── TABELLA PRODOTTI ── */}
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center" wrap>
-              <Text as="h2" variant="headingMd">
-                Tutti i prodotti ({filtered.length}{isFiltered ? ` su ${products.length}` : ""})
-              </Text>
-              {totalPages > 1 && (
-                <InlineStack gap="200" blockAlign="center">
-                  <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Prec.</Button>
-                  <Text as="span" variant="bodySm">
-                    Pag. {page + 1} / {totalPages} ({page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} di {sorted.length})
-                  </Text>
-                  <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Succ. →</Button>
-                </InlineStack>
-              )}
-            </InlineStack>
-
-            {tableRows.length === 0 ? (
-              <Text as="p" tone="subdued">Nessun prodotto trovato con i filtri selezionati.</Text>
-            ) : (
-              <DataTable
-                columnContentTypes={["text", "text", "text", "text", "numeric", "numeric", "numeric"]}
-                headings={["Prodotto", "Brand", "Tipo", "Status", "Varianti", "Stock", "Prezzo medio"]}
-                rows={tableRows}
-                sortable={[false, true, true, true, true, true, true]}
-                defaultSortDirection="ascending"
-                initialSortColumnIndex={0}
-                onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
-              />
-            )}
-
-            {totalPages > 1 && (
-              <InlineStack align="center" gap="200" blockAlign="center">
-                <Button size="slim" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>← Precedente</Button>
-                <Text as="span" variant="bodySm">Pagina {page + 1} di {totalPages}</Text>
-                <Button size="slim" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Successiva →</Button>
-              </InlineStack>
-            )}
-          </BlockStack>
-        </Card>
-
+        <Suspense fallback={<LoadingSkeleton />}>
+          <Await resolve={data}>
+            {(resolved) => <ProdottiContent data={resolved} shop={shop} />}
+          </Await>
+        </Suspense>
       </BlockStack>
     </Page>
   );
