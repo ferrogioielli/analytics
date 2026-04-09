@@ -252,15 +252,22 @@ export async function runShopifyQL(admin, query) {
  * Ritorna { totals, byBrand[] }.
  */
 export async function fetchInventorySnapshot(admin, date) {
+  // SINCE/UNTIL: ending_inventory = inventario alla fine del periodo
+  // Usiamo un range di 1 giorno che termina alla data richiesta
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  const dayBefore = d.toISOString().slice(0, 10);
   const query = `FROM inventory
     SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value
     WHERE inventory_is_tracked = true
     GROUP BY product_vendor WITH TOTALS
-    SINCE ${date} UNTIL ${date}
+    SINCE ${dayBefore} UNTIL ${date}
     ORDER BY ending_inventory_value DESC
     LIMIT 1000`;
+  console.log("ShopifyQL inventory query:", query);
 
   const rows = await runShopifyQL(admin, query);
+  console.log("ShopifyQL inventory rows:", rows.length, "first:", JSON.stringify(rows[0]));
   if (!rows.length) return { totals: { units: 0, costValue: 0, retailValue: 0 }, byBrand: [] };
 
   const num = (v) => parseFloat(String(v).replace(/[^0-9.\-]/g, "")) || 0;
