@@ -1,4 +1,4 @@
-import { useLoaderData, Await } from "@remix-run/react";
+import { useLoaderData, Await, useNavigate } from "@remix-run/react";
 import { defer } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
@@ -308,9 +308,11 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
     setFilterStatus("");
   };
 
+  const navigate = useNavigate();
   const [snapshotDateLocal, setSnapshotDateLocal] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
-  const goToSnapshot = (d) => { window.location.href = `/app/inventario?snapshot=${d}`; };
-  const goToLive = () => { window.location.href = "/app/inventario"; };
+  // Aggiungo timestamp per forzare Remix a ri-eseguire il loader (cache bust)
+  const goToSnapshot = (d) => { navigate(`/app/inventario?snapshot=${d}&_t=${Date.now()}`); };
+  const goToLive = () => { navigate(`/app/inventario?_t=${Date.now()}`); };
 
   return (
     <>
