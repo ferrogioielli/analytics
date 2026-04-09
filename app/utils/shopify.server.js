@@ -200,9 +200,7 @@ function buildDateQuery(startDate, endDate) {
  * Richiede scope read_analytics.
  */
 export async function runShopifyQL(admin, query) {
-  const cacheKey = `ql:${query}`;
-  const cached = cacheGet(cacheKey);
-  if (cached) return cached;
+  // No cache per ShopifyQL — i dati storici devono essere sempre freschi
 
   const response = await admin.graphql(
     `#graphql
@@ -243,7 +241,6 @@ export async function runShopifyQL(admin, query) {
     return obj;
   });
 
-  cacheSet(cacheKey, rows);
   return rows;
 }
 

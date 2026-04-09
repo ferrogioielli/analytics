@@ -1,4 +1,4 @@
-import { useLoaderData, useNavigate, Await } from "@remix-run/react";
+import { useLoaderData, useNavigate, Await, useSearchParams } from "@remix-run/react";
 import { defer } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
@@ -521,8 +521,17 @@ function InventarioContent({ data }) {
 // ─── SNAPSHOT STORICO ─────────────────────────────────────────────────────────
 function SnapshotSection() {
   const { snapshot, snapshotDate } = useLoaderData();
-  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [date, setDate] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
+
+  const handleVedi = () => {
+    if (!date) return;
+    setSearchParams({ snapshot: date });
+  };
+
+  const handleCancella = () => {
+    setSearchParams({});
+  };
 
   return (
     <Card>
@@ -533,11 +542,11 @@ function SnapshotSection() {
             <TextField label="Data" type="date" value={date} onChange={setDate} autoComplete="off" />
           </div>
           <div style={{ paddingTop: 22 }}>
-            <Button variant="primary" onClick={() => date && navigate(`?snapshot=${date}`)}>Vedi</Button>
+            <Button variant="primary" onClick={handleVedi}>Vedi</Button>
           </div>
           {snapshotDate && (
             <div style={{ paddingTop: 22 }}>
-              <Button plain onClick={() => navigate("/app/inventario")}>Cancella</Button>
+              <Button plain onClick={handleCancella}>Cancella</Button>
             </div>
           )}
         </InlineStack>
