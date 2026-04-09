@@ -266,7 +266,7 @@ function ProdottiContent({ data, shop }) {
             <Text as="h2" variant="headingMd">Distribuzione per brand</Text>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 40px", alignItems: "start" }}>
               <div>
-                {byBrand.slice(0, 35).map((b, i) => (
+                {byBrand.slice(0, 20).map((b, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
                     <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 1}.</span>
                     <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
@@ -275,9 +275,9 @@ function ProdottiContent({ data, shop }) {
                 ))}
               </div>
               <div>
-                {byBrand.slice(35).map((b, i) => (
+                {byBrand.slice(20, 40).map((b, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid #f4f4f4" }}>
-                    <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 36}.</span>
+                    <span style={{ fontSize: 13, color: "#6d7175", marginRight: 6, minWidth: 22 }}>{i + 21}.</span>
                     <span style={{ fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
                     <span style={{ fontSize: 13, color: "#6d7175", marginLeft: 8, flexShrink: 0 }}>{b.value}</span>
                   </div>
