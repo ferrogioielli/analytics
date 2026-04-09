@@ -8,21 +8,23 @@
 // naviga tra le tab. TTL breve (5 min) per restare reattivi a nuovi ordini.
 // Nota: in serverless multi-istanza la cache è per-istanza, comunque utile.
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minuti
+const CACHE_TTL_ORDERS_MS  = 5  * 60 * 1000; // 5 min  — ordini (aggiornati spesso)
+const CACHE_TTL_STATIC_MS  = 30 * 60 * 1000; // 30 min — prodotti/clienti (cambiano raramente)
+const MAX_PAGES = 40; // limite sicurezza: max 10.000 record per fetch
 const _cache = new Map();
 
 function cacheGet(key) {
   const entry = _cache.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.t > CACHE_TTL_MS) {
+  if (Date.now() - entry.t > entry.ttl) {
     _cache.delete(key);
     return null;
   }
   return entry.v;
 }
 
-function cacheSet(key, value) {
-  _cache.set(key, { t: Date.now(), v: value });
+function cacheSet(key, value, ttl = CACHE_TTL_ORDERS_MS) {
+  _cache.set(key, { t: Date.now(), v: value, ttl });
   // Soft cap: evita memory leak se la cache cresce troppo
   if (_cache.size > 200) {
     const firstKey = _cache.keys().next().value;
@@ -121,11 +123,13 @@ export async function fetchOrders(admin, { startDate, endDate, skinny = false })
   const orders = [];
   let hasNextPage = true;
   let cursor = null;
+  let pages = 0;
 
   const queryFilter = buildDateQuery(startDate, endDate);
   const fields = skinny ? ORDER_FIELDS_SKINNY : ORDER_FIELDS_FULL;
 
-  while (hasNextPage) {
+  while (hasNextPage && pages < MAX_PAGES) {
+    pages++;
     const variables = { first: 250, query: queryFilter };
     if (cursor) variables.after = cursor;
 
@@ -228,8 +232,10 @@ export async function fetchProducts(admin) {
   const products = [];
   let hasNextPage = true;
   let cursor = null;
+  let pages = 0;
 
-  while (hasNextPage) {
+  while (hasNextPage && pages < MAX_PAGES) {
+    pages++;
     const variables = { first: 250 };
     if (cursor) variables.after = cursor;
 
@@ -256,7 +262,7 @@ export async function fetchProducts(admin) {
     cursor = data.pageInfo.endCursor;
   }
 
-  cacheSet(cacheKey, products);
+  cacheSet(cacheKey, products, CACHE_TTL_STATIC_MS);
   return products;
 }
 
@@ -285,8 +291,10 @@ export async function fetchCustomers(admin) {
   const customers = [];
   let hasNextPage = true;
   let cursor = null;
+  let pages = 0;
 
-  while (hasNextPage) {
+  while (hasNextPage && pages < MAX_PAGES) {
+    pages++;
     const variables = { first: 250 };
     if (cursor) variables.after = cursor;
 
@@ -313,7 +321,7 @@ export async function fetchCustomers(admin) {
     cursor = data.pageInfo.endCursor;
   }
 
-  cacheSet(cacheKey, customers);
+  cacheSet(cacheKey, customers, CACHE_TTL_STATIC_MS);
   return customers;
 }
 

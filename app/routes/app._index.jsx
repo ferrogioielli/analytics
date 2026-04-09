@@ -21,7 +21,7 @@ export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
 
-  const start = url.searchParams.get("start") || daysAgo(30);
+  const start = url.searchParams.get("start") || daysAgo(7);
   const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
   const prev = getPrevPeriod(start, end);
 

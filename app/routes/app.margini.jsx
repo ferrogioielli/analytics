@@ -17,7 +17,7 @@ const MARGIN_COLORS = ["#008060","#1E90FF","#FFB400","#9B59B6","#2ECC71","#E67E2
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const start = url.searchParams.get("start") || daysAgo(30);
+  const start = url.searchParams.get("start") || daysAgo(7);
   const end = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
 
   const [products, orders] = await Promise.all([
@@ -125,6 +125,7 @@ function DateRangePicker({ start, end }) {
   useEffect(() => setCs(start), [start]);
   useEffect(() => setCe(end), [end]);
   const presets = [
+    { label: "7 giorni", start: daysAgo(7), end: today },
     { label: "30 giorni", start: daysAgo(30), end: today },
     { label: "90 giorni", start: daysAgo(90), end: today },
     { label: "Anno", start: `${new Date().getFullYear()}-01-01`, end: today },

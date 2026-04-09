@@ -6,3 +6,5 @@ node_modules
 build
 .shopify
 .DS_Store
+.vercel
+.env.vercel
