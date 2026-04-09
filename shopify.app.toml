@@ -21,7 +21,7 @@ api_version = "2026-07"
   uri = "/webhooks/app/scopes_update"
 
 [access_scopes]
-scopes = "read_orders,read_products,read_customers,read_inventory"
+scopes = "read_orders,read_products,read_customers,read_inventory,read_analytics"
 
 [auth]
 redirect_urls = [ "https://analytics-nine-iota.vercel.app/auth/callback" ]
