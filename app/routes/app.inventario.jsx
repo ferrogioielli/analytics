@@ -1,5 +1,5 @@
 import { useLoaderData, Await, useNavigate } from "@remix-run/react";
-import { defer } from "@remix-run/node";
+import { defer, json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
@@ -57,15 +57,21 @@ export const loader = async ({ request }) => {
     return { variants, vendors, types, allTags };
   })();
 
-  // Snapshot storico: se richiesto, lancia in parallelo (con error handling)
-  const snapshotPromise = snapshotDate
-    ? fetchInventorySnapshot(admin, snapshotDate).catch((err) => {
-        console.error("Snapshot error:", err);
-        return { error: err.message || "Errore nel recupero dati storici" };
-      })
-    : Promise.resolve(null);
+  // Se snapshot richiesto: await diretto (è una sola call ShopifyQL, veloce)
+  // e non serve caricare i prodotti (dati live nascosti)
+  if (snapshotDate) {
+    let snapshotData = null;
+    try {
+      snapshotData = await fetchInventorySnapshot(admin, snapshotDate);
+    } catch (err) {
+      snapshotData = { error: err.message || "Errore nel recupero dati storici" };
+    }
+    // Carica anche prodotti per avere vendors/types per quando torna a live
+    const liveData = await dataPromise;
+    return json({ data: liveData, snapshot: snapshotData, snapshotDate });
+  }
 
-  return defer({ data: dataPromise, snapshot: snapshotPromise, snapshotDate });
+  return defer({ data: dataPromise, snapshot: null, snapshotDate: null });
 };
 
 function exportCSV(rows, filename) {
@@ -310,9 +316,8 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
 
   const navigate = useNavigate();
   const [snapshotDateLocal, setSnapshotDateLocal] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
-  // Aggiungo timestamp per forzare Remix a ri-eseguire il loader (cache bust)
-  const goToSnapshot = (d) => { navigate(`/app/inventario?snapshot=${d}&_t=${Date.now()}`); };
-  const goToLive = () => { navigate(`/app/inventario?_t=${Date.now()}`); };
+  const goToSnapshot = (d) => { navigate(`/app/inventario?snapshot=${d}`); };
+  const goToLive = () => { navigate("/app/inventario"); };
 
   return (
     <>
@@ -552,16 +557,30 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
 
 
 export default function Inventario() {
-  const { data, snapshot, snapshotDate } = useLoaderData();
+  const loaderData = useLoaderData();
+  const { snapshot, snapshotDate } = loaderData;
 
+  // Se snapshot: data è già risolta (json), non serve Await
+  if (snapshotDate) {
+    return (
+      <Page title="Inventario">
+        <TitleBar title="Inventario" />
+        <BlockStack gap="500">
+          <InventarioContent data={loaderData.data} snapshotData={snapshot} snapshotDate={snapshotDate} />
+        </BlockStack>
+      </Page>
+    );
+  }
+
+  // Modalità live: data è deferred
   return (
     <Page title="Inventario">
       <TitleBar title="Inventario" />
       <BlockStack gap="500">
         <Suspense fallback={<LoadingSkeleton />}>
-          <Await resolve={Promise.all([data, snapshot || Promise.resolve(null)])}>
-            {([resolvedData, resolvedSnapshot]) => (
-              <InventarioContent data={resolvedData} snapshotData={resolvedSnapshot} snapshotDate={snapshotDate} />
+          <Await resolve={loaderData.data}>
+            {(resolvedData) => (
+              <InventarioContent data={resolvedData} snapshotData={null} snapshotDate={null} />
             )}
           </Await>
         </Suspense>
