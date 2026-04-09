@@ -3,7 +3,7 @@ import { defer, json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
-  DataTable, Select, TextField, Popover, OptionList,
+  DataTable, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -183,7 +183,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
   const [filterVendors, setFilterVendors] = useState(() => vendors);
   const [filterTypes, setFilterTypes] = useState(() => types);
   const [filterTags, setFilterTags] = useState(() => allTags);
-  const [filterStatus, setFilterStatus] = useState("");
+  const filterStatus = "ACTIVE";
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(6);
   const [sortDir, setSortDir] = useState("descending");
@@ -297,13 +297,6 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
   const typeOptionList = types.map((t) => ({ label: t, value: t }));
   const tagOptionList = allTags.map((t) => ({ label: t, value: t }));
 
-  const statusOptions = [
-    { label: "Tutti gli stati", value: "" },
-    { label: "Disponibile", value: "ACTIVE" },
-    { label: "Bozza", value: "DRAFT" },
-    { label: "Non in elenco", value: "ARCHIVED" },
-  ];
-
   const isFiltered = filtered.length < variants.length;
 
   const resetFilters = () => {
@@ -311,7 +304,6 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
     setFilterVendors(vendors);
     setFilterTypes(types);
     setFilterTags(allTags);
-    setFilterStatus("");
   };
 
   const [, setSearchParams] = useSearchParams();
@@ -372,10 +364,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
                     value={search} onChange={setSearch} autoComplete="off"
                   />
                 </div>
-                <div style={{ minWidth: 180 }}>
-                  <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
-                </div>
-                <div style={{ minWidth: 120 }}>
+<div style={{ minWidth: 120 }}>
                   <TextField
                     label="Soglia scorte basse" type="number" value={threshold}
                     onChange={setThreshold} autoComplete="off" min={1}
