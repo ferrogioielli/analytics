@@ -57,9 +57,12 @@ export const loader = async ({ request }) => {
     return { variants, vendors, types, allTags };
   })();
 
-  // Snapshot storico: se richiesto, lancia in parallelo
+  // Snapshot storico: se richiesto, lancia in parallelo (con error handling)
   const snapshotPromise = snapshotDate
-    ? fetchInventorySnapshot(admin, snapshotDate)
+    ? fetchInventorySnapshot(admin, snapshotDate).catch((err) => {
+        console.error("Snapshot error:", err);
+        return { error: err.message || "Errore nel recupero dati storici" };
+      })
     : Promise.resolve(null);
 
   return defer({ data: dataPromise, snapshot: snapshotPromise, snapshotDate });
@@ -545,10 +548,11 @@ function SnapshotSection() {
               <InlineStack align="center"><Text as="p" tone="subdued">Caricamento dati storici...</Text></InlineStack>
             </div>
           }>
-            <Await resolve={snapshot}>
-              {(snap) => snap ? <SnapshotResults data={snap} date={snapshotDate} /> : (
-                <Text as="p" tone="subdued">Nessun dato disponibile per questa data.</Text>
-              )}
+            <Await resolve={snapshot} errorElement={<Text as="p" tone="critical">Errore nel caricamento dei dati storici.</Text>}>
+              {(snap) => snap?.error
+                ? <Text as="p" tone="critical">{snap.error}</Text>
+                : snap ? <SnapshotResults data={snap} date={snapshotDate} />
+                : <Text as="p" tone="subdued">Nessun dato disponibile per questa data.</Text>}
             </Await>
           </Suspense>
         )}

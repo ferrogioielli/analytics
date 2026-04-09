@@ -224,6 +224,11 @@ export async function runShopifyQL(admin, query) {
   const json = await response.json();
   const result = json.data?.shopifyqlQuery;
 
+  if (json.errors?.length) {
+    console.error("ShopifyQL GraphQL errors:", JSON.stringify(json.errors));
+    throw new Error(json.errors[0]?.message || "ShopifyQL query failed");
+  }
+
   if (result?.parseErrors?.length) {
     console.error("ShopifyQL parse errors:", JSON.stringify(result.parseErrors));
     return [];
