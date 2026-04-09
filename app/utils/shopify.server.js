@@ -225,7 +225,7 @@ export async function runShopifyQL(admin, query) {
 
   const result = json.data?.shopifyqlQuery;
 
-  if (result?.parseErrors) {
+  if (result?.parseErrors?.length) {
     console.error("ShopifyQL parse errors:", result.parseErrors);
     return [];
   }
@@ -235,10 +235,14 @@ export async function runShopifyQL(admin, query) {
 
   const cols = table.columns.map((c) => c.name);
   const rows = table.rows.map((row) => {
-    const cells = typeof row === "string" ? JSON.parse(row) : row;
-    const obj = {};
-    cols.forEach((col, i) => { obj[col] = cells[i]; });
-    return obj;
+    // L'API può restituire oggetti {col: val} o array [val1, val2]
+    if (typeof row === "string") return JSON.parse(row);
+    if (Array.isArray(row)) {
+      const obj = {};
+      cols.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    }
+    return row; // già un oggetto con chiavi
   });
 
   return rows;
@@ -264,25 +268,20 @@ export async function fetchInventorySnapshot(admin, date) {
   console.log("ShopifyQL inventory query:", query);
 
   const rows = await runShopifyQL(admin, query);
-  console.log("ShopifyQL inventory rows:", rows.length, "first:", JSON.stringify(rows[0]));
   if (!rows.length) return { totals: { units: 0, costValue: 0, retailValue: 0 }, byBrand: [] };
 
   const num = (v) => parseFloat(String(v).replace(/[^0-9.\-]/g, "")) || 0;
 
-  // La prima riga con vendor vuoto/null è il totale (WITH TOTALS)
-  const totalsRow = rows.find((r) => !r.product_vendor || r.product_vendor === "(not set)");
-  const brandRows = rows.filter((r) => r.product_vendor && r.product_vendor !== "(not set)");
+  // I totali sono nelle colonne __totals (ripetuti in ogni riga)
+  const first = rows[0];
+  const totals = {
+    units: num(first.ending_inventory_units__totals ?? first.ending_inventory_units),
+    costValue: num(first.ending_inventory_value__totals ?? first.ending_inventory_value),
+    retailValue: num(first.ending_inventory_retail_value__totals ?? first.ending_inventory_retail_value),
+  };
 
-  const totals = totalsRow
-    ? { units: num(totalsRow.ending_inventory_units), costValue: num(totalsRow.ending_inventory_value), retailValue: num(totalsRow.ending_inventory_retail_value) }
-    : {
-        units: brandRows.reduce((s, r) => s + num(r.ending_inventory_units), 0),
-        costValue: brandRows.reduce((s, r) => s + num(r.ending_inventory_value), 0),
-        retailValue: brandRows.reduce((s, r) => s + num(r.ending_inventory_retail_value), 0),
-      };
-
-  const byBrand = brandRows.map((r) => ({
-    brand: r.product_vendor,
+  const byBrand = rows.map((r) => ({
+    brand: r.product_vendor || "Senza brand",
     units: num(r.ending_inventory_units),
     costValue: num(r.ending_inventory_value),
     retailValue: num(r.ending_inventory_retail_value),
