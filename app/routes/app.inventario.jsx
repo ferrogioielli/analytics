@@ -1,4 +1,4 @@
-import { useLoaderData, useNavigate, Await } from "@remix-run/react";
+import { useLoaderData, Await } from "@remix-run/react";
 import { defer } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
@@ -308,8 +308,9 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
     setFilterStatus("");
   };
 
-  const navigate = useNavigate();
   const [snapshotDateLocal, setSnapshotDateLocal] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
+  const goToSnapshot = (d) => { window.location.href = `/app/inventario?snapshot=${d}`; };
+  const goToLive = () => { window.location.href = "/app/inventario"; };
 
   return (
     <>
@@ -328,7 +329,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
           <InlineStack align="space-between" blockAlign="center">
             <Text as="h2" variant="headingMd">Filtri</Text>
             {(isFiltered || isSnapshot) && (
-              <Button size="slim" plain onClick={() => { resetFilters(); if (isSnapshot) navigate("/app/inventario"); }}>Azzera filtri</Button>
+              <Button size="slim" plain onClick={() => { resetFilters(); if (isSnapshot) goToLive(); }}>Azzera filtri</Button>
             )}
           </InlineStack>
 
@@ -337,11 +338,11 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
               <TextField label="Data inventario" type="date" value={snapshotDateLocal} onChange={setSnapshotDateLocal} autoComplete="off" />
             </div>
             <div style={{ paddingTop: 22 }}>
-              <Button onClick={() => navigate(`?snapshot=${snapshotDateLocal}`)}>Applica data</Button>
+              <Button onClick={() => goToSnapshot(snapshotDateLocal)}>Applica data</Button>
             </div>
             {isSnapshot && (
               <div style={{ paddingTop: 22 }}>
-                <Button plain onClick={() => navigate("/app/inventario")}>Oggi (live)</Button>
+                <Button plain onClick={() => goToLive()}>Oggi (live)</Button>
               </div>
             )}
           </InlineStack>
