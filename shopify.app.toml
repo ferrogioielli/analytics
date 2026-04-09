@@ -3,7 +3,7 @@
 
 client_id = "a01db05080d36e5f51a8eb989b80be48"
 name = "Analytics"
-application_url = "https://analytics-nine-iota.vercel.app"
+application_url = "https://analytics-ferrogioielli.vercel.app"
 embedded = true
 
 [build]
@@ -24,4 +24,4 @@ api_version = "2026-07"
 scopes = "read_orders,read_products,read_customers,read_inventory,read_analytics"
 
 [auth]
-redirect_urls = [ "https://analytics-nine-iota.vercel.app/auth/callback" ]
+redirect_urls = [ "https://analytics-ferrogioielli.vercel.app/auth/callback" ]
