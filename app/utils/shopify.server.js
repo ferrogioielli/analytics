@@ -212,10 +212,7 @@ export async function runShopifyQL(admin, query) {
           columns { name dataType }
           rows
         }
-        parseErrors {
-          code
-          message
-        }
+        parseErrors
       }
     }`,
     { variables: { query } },
@@ -230,8 +227,8 @@ export async function runShopifyQL(admin, query) {
 
   const result = json.data?.shopifyqlQuery;
 
-  if (result?.parseErrors?.length) {
-    console.error("ShopifyQL parse errors:", JSON.stringify(result.parseErrors));
+  if (result?.parseErrors) {
+    console.error("ShopifyQL parse errors:", result.parseErrors);
     return [];
   }
 
