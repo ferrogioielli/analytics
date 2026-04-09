@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import { authenticate } from "../shopify.server";
 import { fetchProducts } from "../utils/shopify.server";
-import { formatCurrency, daysAgo } from "../utils/format";
+import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -30,7 +30,6 @@ export const loader = async ({ request }) => {
       variants.push({
         productId: p.id,
         productTitle: p.title,
-        productCreatedAt: p.createdAt || null,
         vendor: p.vendor || "",
         productType: p.productType || "",
         status: p.status || "ACTIVE",
@@ -146,9 +145,6 @@ export default function Inventario() {
   const [filterTypes, setFilterTypes] = useState(() => types);
   const [filterTags, setFilterTags] = useState(() => allTags);
   const [filterStatus, setFilterStatus] = useState("");
-  // Filtro per data di creazione del prodotto (vuoto = nessun limite)
-  const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo, setFilterDateTo] = useState("");
   const [threshold, setThreshold] = useState("5");
   const [sortCol, setSortCol] = useState(6);
   const [sortDir, setSortDir] = useState("descending");
@@ -173,15 +169,8 @@ export default function Inventario() {
       const excluded = allTags.filter((t) => !filterTags.includes(t));
       if (excluded.some((t) => v.tags.includes(t))) return false;
     }
-    // Data di creazione prodotto: confronto sulla parte YYYY-MM-DD dell'ISO
-    if (filterDateFrom || filterDateTo) {
-      const createdDay = v.productCreatedAt ? v.productCreatedAt.slice(0, 10) : "";
-      if (!createdDay) return false;
-      if (filterDateFrom && createdDay < filterDateFrom) return false;
-      if (filterDateTo && createdDay > filterDateTo) return false;
-    }
     return true;
-  }), [variants, search, filterVendors, filterTypes, filterStatus, filterTags, filterDateFrom, filterDateTo, vendors, types, allTags, thr]);
+  }), [variants, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags, thr]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -288,16 +277,7 @@ export default function Inventario() {
     setFilterTypes(types);
     setFilterTags(allTags);
     setFilterStatus("");
-    setFilterDateFrom("");
-    setFilterDateTo("");
   };
-
-  const today = new Date().toISOString().slice(0, 10);
-  const datePresets = [
-    { label: "30 giorni", from: daysAgo(30), to: today },
-    { label: "90 giorni", from: daysAgo(90), to: today },
-    { label: "Anno", from: `${new Date().getFullYear()}-01-01`, to: today },
-  ];
 
   return (
     <Page title="Inventario">
@@ -377,51 +357,6 @@ export default function Inventario() {
               </div>
             </InlineStack>
 
-            {/* Riga 3: Filtro data di creazione prodotto */}
-            <BlockStack gap="200">
-              <Text as="span" variant="bodySm">Data creazione prodotto</Text>
-              <InlineStack gap="200" blockAlign="end" wrap>
-                <div style={{ minWidth: 150 }}>
-                  <TextField
-                    label="Dal" type="date" value={filterDateFrom}
-                    onChange={setFilterDateFrom} autoComplete="off"
-                  />
-                </div>
-                <div style={{ minWidth: 150 }}>
-                  <TextField
-                    label="Al" type="date" value={filterDateTo}
-                    onChange={setFilterDateTo} autoComplete="off"
-                  />
-                </div>
-                <InlineStack gap="100" blockAlign="center">
-                  {datePresets.map((p) => {
-                    const active = filterDateFrom === p.from && filterDateTo === p.to;
-                    return (
-                      <Button
-                        key={p.label}
-                        size="slim"
-                        variant={active ? "primary" : "plain"}
-                        onClick={() => {
-                          setFilterDateFrom(p.from);
-                          setFilterDateTo(p.to);
-                        }}
-                      >
-                        {p.label}
-                      </Button>
-                    );
-                  })}
-                  {(filterDateFrom || filterDateTo) && (
-                    <Button
-                      size="slim"
-                      plain
-                      onClick={() => { setFilterDateFrom(""); setFilterDateTo(""); }}
-                    >
-                      Azzera date ✕
-                    </Button>
-                  )}
-                </InlineStack>
-              </InlineStack>
-            </BlockStack>
 
             {isFiltered && (
               <Text as="p" variant="bodySm" tone="subdued">
