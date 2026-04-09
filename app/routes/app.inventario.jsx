@@ -1,4 +1,4 @@
-import { useLoaderData, useNavigate, Await, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useNavigate, Await } from "@remix-run/react";
 import { defer } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
@@ -169,8 +169,9 @@ function LoadingSkeleton() {
 }
 
 // ─── MAIN CONTENT ─────────────────────────────────────────────────────────────
-function InventarioContent({ data }) {
+function InventarioContent({ data, snapshotData, snapshotDate }) {
   const { variants, vendors, types, allTags } = data;
+  const isSnapshot = !!snapshotDate && !!snapshotData && !snapshotData.error;
 
   const [search, setSearch] = useState("");
   const [filterVendors, setFilterVendors] = useState(() => vendors);
@@ -307,6 +308,9 @@ function InventarioContent({ data }) {
     setFilterStatus("");
   };
 
+  const navigate = useNavigate();
+  const [snapshotDateLocal, setSnapshotDateLocal] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
+
   return (
     <>
       {/* ── HEADER ── */}
@@ -323,157 +327,181 @@ function InventarioContent({ data }) {
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center">
             <Text as="h2" variant="headingMd">Filtri</Text>
-            {isFiltered && (
-              <Button size="slim" plain onClick={resetFilters}>Azzera filtri</Button>
+            {(isFiltered || isSnapshot) && (
+              <Button size="slim" plain onClick={() => { resetFilters(); if (isSnapshot) navigate("/app/inventario"); }}>Azzera filtri</Button>
             )}
           </InlineStack>
 
           <InlineStack gap="300" wrap blockAlign="start">
-            <div style={{ minWidth: 220 }}>
-              <TextField
-                label="Cerca" placeholder="Prodotto / SKU..."
-                value={search} onChange={setSearch} autoComplete="off"
-              />
-            </div>
             <div style={{ minWidth: 180 }}>
-              <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
+              <TextField label="Data inventario" type="date" value={snapshotDateLocal} onChange={setSnapshotDateLocal} autoComplete="off" />
             </div>
-            <div style={{ minWidth: 120 }}>
-              <TextField
-                label="Soglia scorte basse" type="number" value={threshold}
-                onChange={setThreshold} autoComplete="off" min={1}
-                helpText={`≤ ${thr} pz = basso`}
-              />
+            <div style={{ paddingTop: 22 }}>
+              <Button onClick={() => navigate(`?snapshot=${snapshotDateLocal}`)}>Applica data</Button>
             </div>
+            {isSnapshot && (
+              <div style={{ paddingTop: 22 }}>
+                <Button plain onClick={() => navigate("/app/inventario")}>Oggi (live)</Button>
+              </div>
+            )}
           </InlineStack>
 
-          <InlineStack gap="300" wrap blockAlign="start">
-            <div style={{ minWidth: 200 }}>
-              <MultiSelect
-                label="Brand"
-                allLabel="Tutti i brand"
-                options={vendorOptionList}
-                selected={filterVendors}
-                onChange={setFilterVendors}
-                allValues={vendors}
-              />
-            </div>
-            <div style={{ minWidth: 200 }}>
-              <MultiSelect
-                label="Tipo prodotto"
-                allLabel="Tutti i tipi"
-                options={typeOptionList}
-                selected={filterTypes}
-                onChange={setFilterTypes}
-                allValues={types}
-              />
-            </div>
-            <div style={{ minWidth: 200 }}>
-              <MultiSelect
-                label="Tag"
-                allLabel="Tutti i tag"
-                options={tagOptionList}
-                selected={filterTags}
-                onChange={setFilterTags}
-                allValues={allTags}
-              />
-            </div>
-          </InlineStack>
-
-          {isFiltered && (
-            <Text as="p" variant="bodySm" tone="subdued">
-              {filtered.length} varianti su {variants.length} totali
+          {isSnapshot && (
+            <Text as="p" variant="bodySm" tone="info">
+              Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })}
             </Text>
+          )}
+
+          {!isSnapshot && (
+            <>
+              <InlineStack gap="300" wrap blockAlign="start">
+                <div style={{ minWidth: 220 }}>
+                  <TextField
+                    label="Cerca" placeholder="Prodotto / SKU..."
+                    value={search} onChange={setSearch} autoComplete="off"
+                  />
+                </div>
+                <div style={{ minWidth: 180 }}>
+                  <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
+                </div>
+                <div style={{ minWidth: 120 }}>
+                  <TextField
+                    label="Soglia scorte basse" type="number" value={threshold}
+                    onChange={setThreshold} autoComplete="off" min={1}
+                    helpText={`≤ ${thr} pz = basso`}
+                  />
+                </div>
+              </InlineStack>
+
+              <InlineStack gap="300" wrap blockAlign="start">
+                <div style={{ minWidth: 200 }}>
+                  <MultiSelect
+                    label="Brand"
+                    allLabel="Tutti i brand"
+                    options={vendorOptionList}
+                    selected={filterVendors}
+                    onChange={setFilterVendors}
+                    allValues={vendors}
+                  />
+                </div>
+                <div style={{ minWidth: 200 }}>
+                  <MultiSelect
+                    label="Tipo prodotto"
+                    allLabel="Tutti i tipi"
+                    options={typeOptionList}
+                    selected={filterTypes}
+                    onChange={setFilterTypes}
+                    allValues={types}
+                  />
+                </div>
+                <div style={{ minWidth: 200 }}>
+                  <MultiSelect
+                    label="Tag"
+                    allLabel="Tutti i tag"
+                    options={tagOptionList}
+                    selected={filterTags}
+                    onChange={setFilterTags}
+                    allValues={allTags}
+                  />
+                </div>
+              </InlineStack>
+
+              {isFiltered && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {filtered.length} varianti su {variants.length} totali
+                </Text>
+              )}
+            </>
           )}
         </BlockStack>
       </Card>
 
-      {/* ── KPI DINAMICI ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-        {[
-          { label: `Pezzi in stock${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
-          { label: `Valore magazzino (costo)${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredTotalValue) },
-          { label: `Valore a prezzo vendita${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredSalesValue) },
-          {
-            label: "Margine medio (su filtro)",
-            value: avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—",
-            color: avgMargin !== null ? (avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060") : undefined,
-          },
-        ].map(({ label, value, color }) => (
-          <Card key={label}>
-            <BlockStack gap="100">
+      {/* ── KPI ── */}
+      {isSnapshot ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Pezzi in stock</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{snapshotData.totals.units.toLocaleString("it-IT")}</Text>
+          </BlockStack></Card>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Valore (costo)</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(snapshotData.totals.costValue)}</Text>
+          </BlockStack></Card>
+          <Card><BlockStack gap="100">
+            <Text as="p" variant="bodySm" tone="subdued">Valore (vendita)</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(snapshotData.totals.retailValue)}</Text>
+          </BlockStack></Card>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          {[
+            { label: `Pezzi in stock${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
+            { label: `Valore magazzino (costo)${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredTotalValue) },
+            { label: `Valore a prezzo vendita${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredSalesValue) },
+            {
+              label: "Margine medio (su filtro)",
+              value: avgMargin !== null ? avgMargin.toFixed(1) + "%" : "—",
+              color: avgMargin !== null ? (avgMargin < 20 ? "#d82c0d" : avgMargin < 40 ? "#b98900" : "#008060") : undefined,
+            },
+          ].map(({ label, value, color }) => (
+            <Card key={label}><BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">
-                <span style={color ? { color } : {}}>{value}</span>
-              </Text>
-            </BlockStack>
-          </Card>
-        ))}
-      </div>
+              <Text as="p" variant="headingLg" fontWeight="bold"><span style={color ? { color } : {}}>{value}</span></Text>
+            </BlockStack></Card>
+          ))}
+        </div>
+      )}
 
       {/* ── RIEPILOGO PER BRAND ── */}
-      <Card>
-        <BlockStack gap="300">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="h2" variant="headingMd">
-              Riepilogo per brand{isFiltered ? " — filtrato" : ""}
-            </Text>
-            <Button size="slim" plain onClick={() => exportCSV(brandExportRows, "inventario_per_brand.csv")}>
-              Esporta CSV
-            </Button>
-          </InlineStack>
-          {brandSummary.length === 0 ? (
-            <Text as="p" tone="subdued">Nessun dato.</Text>
-          ) : (
-            <DataTable
-              columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-              headings={["Brand", "Varianti", "Pezzi totali", "Valore costo", "Valore vendita", "Margine medio"]}
-              rows={brandSummary.map((b) => [
-                <Button
-                  key={b.brand}
-                  size="slim"
-                  plain
-                  onClick={() => {
-                    if (b.brand === "—") return;
-                    setFilterVendors([b.brand]);
-                  }}
-                >
-                  {b.brand}
-                </Button>,
-                b.variants.toString(),
-                b.qty.toLocaleString("it-IT"),
-                b.stockValue > 0 ? formatCurrency(b.stockValue) : "—",
-                formatCurrency(b.salesValue),
-                b.avgMargin !== null ? (
-                  <MarginCell key={b.brand + "m"} margin={b.avgMargin} />
-                ) : "—",
-              ])}
-            />
-          )}
-        </BlockStack>
-      </Card>
+      {isSnapshot ? (
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Riepilogo per brand</Text>
+            {snapshotData.byBrand.length === 0 ? (
+              <Text as="p" tone="subdued">Nessun dato.</Text>
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "numeric", "numeric", "numeric"]}
+                headings={["Brand", "Pezzi", "Valore costo", "Valore vendita"]}
+                rows={snapshotData.byBrand.map((b) => [
+                  b.brand,
+                  b.units.toLocaleString("it-IT"),
+                  formatCurrency(b.costValue),
+                  formatCurrency(b.retailValue),
+                ])}
+              />
+            )}
+          </BlockStack>
+        </Card>
+      ) : (
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Riepilogo per brand{isFiltered ? " — filtrato" : ""}</Text>
+              <Button size="slim" plain onClick={() => exportCSV(brandExportRows, "inventario_per_brand.csv")}>Esporta CSV</Button>
+            </InlineStack>
+            {brandSummary.length === 0 ? (
+              <Text as="p" tone="subdued">Nessun dato.</Text>
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
+                headings={["Brand", "Varianti", "Pezzi totali", "Valore costo", "Valore vendita", "Margine medio"]}
+                rows={brandSummary.map((b) => [
+                  <Button key={b.brand} size="slim" plain onClick={() => { if (b.brand !== "—") setFilterVendors([b.brand]); }}>{b.brand}</Button>,
+                  b.variants.toString(),
+                  b.qty.toLocaleString("it-IT"),
+                  b.stockValue > 0 ? formatCurrency(b.stockValue) : "—",
+                  formatCurrency(b.salesValue),
+                  b.avgMargin !== null ? <MarginCell key={b.brand + "m"} margin={b.avgMargin} /> : "—",
+                ])}
+              />
+            )}
+          </BlockStack>
+        </Card>
+      )}
 
-      {/* ── GRAFICO TOP 20 ── */}
-      <Card>
-        <BlockStack gap="300">
-          <Text as="h2" variant="headingMd">Top 20 varianti per valore magazzino{isFiltered ? " — filtrato" : ""}</Text>
-          {topByValue.length === 0 ? (
-            <Text as="p" tone="subdued">Nessun dato (aggiungi il costo unitario ai prodotti in Shopify).</Text>
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={topByValue} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `€${v.toFixed(0)}`} />
-                <YAxis type="category" dataKey="title" tick={{ fontSize: 9 }} width={220} />
-                <Tooltip formatter={(v) => formatCurrency(v)} />
-                <Bar dataKey="value" name="Valore mag." fill="#9B59B6" radius={[0, 3, 3, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </BlockStack>
-      </Card>
-
-      {/* ── TABELLA VARIANTI ── */}
+      {/* ── TABELLA VARIANTI (solo dati live) ── */}
+      {isSnapshot ? null : (
       <Card>
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center" wrap>
@@ -514,124 +542,26 @@ function InventarioContent({ data }) {
           )}
         </BlockStack>
       </Card>
+      )}
     </>
   );
 }
 
-// ─── SNAPSHOT STORICO ─────────────────────────────────────────────────────────
-function SnapshotSection() {
-  const { snapshot, snapshotDate } = useLoaderData();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [date, setDate] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
-
-  const handleVedi = () => {
-    if (!date) return;
-    setSearchParams({ snapshot: date });
-  };
-
-  const handleCancella = () => {
-    setSearchParams({});
-  };
-
-  return (
-    <Card>
-      <BlockStack gap="400">
-        <Text as="h2" variant="headingMd">Inventario a una data specifica</Text>
-        <InlineStack gap="200" blockAlign="end" wrap>
-          <div style={{ minWidth: 180 }}>
-            <TextField label="Data" type="date" value={date} onChange={setDate} autoComplete="off" />
-          </div>
-          <div style={{ paddingTop: 22 }}>
-            <Button variant="primary" onClick={handleVedi}>Vedi</Button>
-          </div>
-          {snapshotDate && (
-            <div style={{ paddingTop: 22 }}>
-              <Button plain onClick={handleCancella}>Cancella</Button>
-            </div>
-          )}
-        </InlineStack>
-
-        {snapshotDate && (
-          <Suspense fallback={
-            <div style={{ padding: "20px 0" }}>
-              <InlineStack align="center"><Text as="p" tone="subdued">Caricamento dati storici...</Text></InlineStack>
-            </div>
-          }>
-            <Await resolve={snapshot} errorElement={<Text as="p" tone="critical">Errore nel caricamento dei dati storici.</Text>}>
-              {(snap) => snap?.error
-                ? <Text as="p" tone="critical">{snap.error}</Text>
-                : snap ? <SnapshotResults data={snap} date={snapshotDate} />
-                : <Text as="p" tone="subdued">Nessun dato disponibile per questa data.</Text>}
-            </Await>
-          </Suspense>
-        )}
-      </BlockStack>
-    </Card>
-  );
-}
-
-function SnapshotResults({ data, date }) {
-  const { totals, byBrand } = data;
-  if (totals.units === 0 && totals.costValue === 0) {
-    return <Text as="p" tone="subdued">Nessun dato di inventario disponibile per il {new Date(date).toLocaleDateString("it-IT")}.</Text>;
-  }
-  return (
-    <BlockStack gap="400">
-      <Text as="p" variant="bodySm" tone="subdued">
-        Dati al {new Date(date).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })}
-      </Text>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        <Card>
-          <BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Pezzi in stock</Text>
-            <Text as="p" variant="headingLg" fontWeight="bold">{totals.units.toLocaleString("it-IT")}</Text>
-          </BlockStack>
-        </Card>
-        <Card>
-          <BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Valore (costo)</Text>
-            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(totals.costValue)}</Text>
-          </BlockStack>
-        </Card>
-        <Card>
-          <BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Valore (vendita)</Text>
-            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(totals.retailValue)}</Text>
-          </BlockStack>
-        </Card>
-      </div>
-
-      {byBrand.length > 0 && (
-        <DataTable
-          columnContentTypes={["text", "numeric", "numeric", "numeric"]}
-          headings={["Brand", "Pezzi", "Valore costo", "Valore vendita"]}
-          rows={byBrand.map((b) => [
-            b.brand,
-            b.units.toLocaleString("it-IT"),
-            formatCurrency(b.costValue),
-            formatCurrency(b.retailValue),
-          ])}
-        />
-      )}
-    </BlockStack>
-  );
-}
 
 export default function Inventario() {
-  const { data, snapshotDate } = useLoaderData();
+  const { data, snapshot, snapshotDate } = useLoaderData();
 
   return (
     <Page title="Inventario">
       <TitleBar title="Inventario" />
       <BlockStack gap="500">
-        <SnapshotSection />
-        {!snapshotDate && (
-          <Suspense fallback={<LoadingSkeleton />}>
-            <Await resolve={data}>
-              {(resolved) => <InventarioContent data={resolved} />}
-            </Await>
-          </Suspense>
-        )}
+        <Suspense fallback={<LoadingSkeleton />}>
+          <Await resolve={Promise.all([data, snapshot || Promise.resolve(null)])}>
+            {([resolvedData, resolvedSnapshot]) => (
+              <InventarioContent data={resolvedData} snapshotData={resolvedSnapshot} snapshotDate={snapshotDate} />
+            )}
+          </Await>
+        </Suspense>
       </BlockStack>
     </Page>
   );
