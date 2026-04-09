@@ -189,7 +189,6 @@ function buildDateQuery(startDate, endDate) {
   return parts.join(" ") || undefined;
 }
 
-/**
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
 
 const PRODUCT_FIELDS = `
