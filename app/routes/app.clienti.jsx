@@ -134,7 +134,8 @@ export default function Clienti() {
 
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
-  const [top10Period, setTop10Period] = useState("tutto"); // oggi | settimana | mese | tutto
+  const [top10Period, setTop10Period] = useState("settimana"); // oggi | settimana | mese | tutto
+  const [habitualPeriod, setHabitualPeriod] = useState("settimana");
 
   // ── RFM segmentation ──
   const rfmSegments = useMemo(() => {
@@ -182,35 +183,34 @@ export default function Clienti() {
     return topByOrders(filtered, 10);
   }, [customers, ordersSummary, top10Period]);
 
-  // ── Clienti a rischio (A rischio + Persi, top 10 per inattività) ──
-  const atRisk = useMemo(() =>
-    rfmSegments
-      .filter((c) => c.segment === "A rischio" || c.segment === "Persi")
-      .sort((a, b) => b.daysSinceLast - a.daysSinceLast)
-      .slice(0, 10)
-      .map((c) => ({
-        name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
-        email: c.email || "—",
-        spend: parseFloat(c.amountSpent?.amount || 0),
-        orders: parseInt(c.numberOfOrders) || 0,
-        daysSinceLast: c.daysSinceLast,
-      }))
-  , [rfmSegments]);
-
-  // ── Clienti abituali (Champions + Abituali, top 10 per spesa) ──
-  const habitual = useMemo(() =>
-    rfmSegments
-      .filter((c) => c.segment === "Champions" || c.segment === "Abituali")
-      .sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0))
-      .slice(0, 10)
-      .map((c) => ({
-        name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
-        email: c.email || "—",
-        spend: parseFloat(c.amountSpent?.amount || 0),
-        orders: parseInt(c.numberOfOrders) || 0,
-        daysSinceLast: c.daysSinceLast,
-      }))
-  , [rfmSegments]);
+  // ── Clienti abituali (Champions + Abituali) filtrati per periodo ──
+  const habitual = useMemo(() => {
+    const returningCustomers = rfmSegments.filter((c) => c.segment === "Champions" || c.segment === "Abituali");
+    if (habitualPeriod === "tutto") {
+      return returningCustomers
+        .sort((a, b) => parseFloat(b.amountSpent?.amount || 0) - parseFloat(a.amountSpent?.amount || 0))
+        .slice(0, 10)
+        .map((c) => ({
+          name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.email || "—",
+          email: c.email || "—",
+          spend: parseFloat(c.amountSpent?.amount || 0),
+          orders: parseInt(c.numberOfOrders) || 0,
+        }));
+    }
+    // Filtra ordini per periodo
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const filteredOrders = ordersSummary.filter((o) => {
+      const d = o.createdAt.slice(0, 10);
+      if (habitualPeriod === "oggi") return d === todayStr;
+      if (habitualPeriod === "settimana") return d >= daysAgo(7);
+      if (habitualPeriod === "mese") return d >= daysAgo(30);
+      return true;
+    });
+    // Solo ordini di clienti abituali
+    const returningIds = new Set(returningCustomers.map((c) => c.id));
+    const habitualOrders = filteredOrders.filter((o) => returningIds.has(o.customerId));
+    return topByOrders(habitualOrders, 10);
+  }, [rfmSegments, ordersSummary, habitualPeriod]);
 
   // ── Tabella tutti i clienti ──
   const totalPages = Math.ceil(rfmSegments.length / PAGE_SIZE);
@@ -309,25 +309,22 @@ export default function Clienti() {
           </BlockStack>
         </Card>
 
-        {/* ── CLIENTI A RISCHIO ── */}
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Clienti a rischio</Text>
-              <Text as="p" variant="bodySm" tone="subdued">Non acquistano da oltre 90 giorni</Text>
-            </InlineStack>
-            <ClientiList items={atRisk} currency={currency} emptyMsg="Nessun cliente a rischio." showInactivo />
-          </BlockStack>
-        </Card>
-
         {/* ── CLIENTI ABITUALI ── */}
         <Card>
           <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
+            <InlineStack align="space-between" blockAlign="center" wrap>
               <Text as="h2" variant="headingMd">Clienti abituali</Text>
-              <Text as="p" variant="bodySm" tone="subdued">Champions e abituali per spesa totale</Text>
+              <InlineStack gap="100">
+                {periodLabels.map(({ key, label }) => (
+                  <Button key={key} size="slim"
+                    variant={habitualPeriod === key ? "primary" : "plain"}
+                    onClick={() => setHabitualPeriod(key)}>
+                    {label}
+                  </Button>
+                ))}
+              </InlineStack>
             </InlineStack>
-            <ClientiList items={habitual} currency={currency} emptyMsg="Nessun cliente abituale trovato." />
+            <ClientiList items={habitual} currency={currency} emptyMsg="Nessun cliente abituale nel periodo." />
           </BlockStack>
         </Card>
 
