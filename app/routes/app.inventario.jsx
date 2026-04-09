@@ -1,4 +1,4 @@
-import { useLoaderData, Await, useNavigate } from "@remix-run/react";
+import { useLoaderData, Await, useSearchParams } from "@remix-run/react";
 import { defer, json } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
@@ -314,10 +314,13 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
     setFilterStatus("");
   };
 
-  const navigate = useNavigate();
+  const [, setSearchParams] = useSearchParams();
   const [snapshotDateLocal, setSnapshotDateLocal] = useState(snapshotDate || new Date().toISOString().slice(0, 10));
-  const goToSnapshot = (d) => { navigate(`/app/inventario?snapshot=${d}`); };
-  const goToLive = () => { navigate("/app/inventario"); };
+  useEffect(() => {
+    setSnapshotDateLocal(snapshotDate || new Date().toISOString().slice(0, 10));
+  }, [snapshotDate]);
+  const goToSnapshot = (d) => { setSearchParams({ snapshot: d }); };
+  const goToLive = () => { setSearchParams({}); };
 
   return (
     <>
