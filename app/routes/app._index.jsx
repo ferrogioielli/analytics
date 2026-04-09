@@ -14,7 +14,7 @@ import {
   fetchOrders, groupOrdersByDay, calcKPI, topProductsByRevenue,
   ordersByFinancialStatus,
 } from "../utils/shopify.server";
-import { getDateRange, getPrevPeriod, formatCurrency, formatDate, daysAgo } from "../utils/shopify.server";
+import { getPrevPeriod, formatCurrency, formatDate, daysAgo } from "../utils/format";
 
 // ─── LOADER ────────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
