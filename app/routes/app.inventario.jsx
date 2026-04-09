@@ -1,6 +1,6 @@
-import { useLoaderData, Await, useSearchParams } from "@remix-run/react";
-import { defer, json } from "@remix-run/node";
-import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
+import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { json } from "@remix-run/node";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Page, Card, BlockStack, InlineStack, Text, Button, Badge,
   DataTable, TextField, Popover, OptionList,
@@ -57,21 +57,17 @@ export const loader = async ({ request }) => {
     return { variants, vendors, types, allTags };
   })();
 
-  // Se snapshot richiesto: await diretto (è una sola call ShopifyQL, veloce)
-  // e non serve caricare i prodotti (dati live nascosti)
+  let snapshotData = null;
   if (snapshotDate) {
-    let snapshotData = null;
     try {
       snapshotData = await fetchInventorySnapshot(admin, snapshotDate);
     } catch (err) {
       snapshotData = { error: err.message || "Errore nel recupero dati storici" };
     }
-    // Carica anche prodotti per avere vendors/types per quando torna a live
-    const liveData = await dataPromise;
-    return json({ data: liveData, snapshot: snapshotData, snapshotDate });
   }
 
-  return defer({ data: dataPromise, snapshot: null, snapshotDate: null });
+  const data = await dataPromise;
+  return json({ data, snapshot: snapshotData, snapshotDate });
 };
 
 function exportCSV(rows, filename) {
@@ -149,30 +145,6 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
 }
 
 const SORT_KEYS = [null, null, "vendor", "productType", "margin", "qty", "stockValue", "salesValue"];
-
-// ─── LOADING SKELETON ─────────────────────────────────────────────────────────
-function LoadingSkeleton() {
-  const box = (w, h) => ({ width: w, height: h, background: "#f0f0f0", borderRadius: 6, animation: "pulse 1.5s infinite" });
-  return (
-    <>
-      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
-      {/* Filters */}
-      <Card><BlockStack gap="300"><div style={box("20%",20)} /><div style={box("100%",80)} /></BlockStack></Card>
-      {/* KPI cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-        {[1,2,3,4,5].map(i => (
-          <Card key={i}><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>
-        ))}
-      </div>
-      {/* Brand summary */}
-      <Card><BlockStack gap="300"><div style={box("40%",20)} /><div style={box("100%",200)} /></BlockStack></Card>
-      {/* Chart */}
-      <Card><BlockStack gap="300"><div style={box("50%",20)} /><div style={box("100%",320)} /></BlockStack></Card>
-      {/* Table */}
-      <Card><BlockStack gap="300"><div style={box("30%",20)} /><div style={box("100%",300)} /></BlockStack></Card>
-    </>
-  );
-}
 
 // ─── MAIN CONTENT ─────────────────────────────────────────────────────────────
 function InventarioContent({ data, snapshotData, snapshotDate }) {
@@ -549,33 +521,13 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
 
 
 export default function Inventario() {
-  const loaderData = useLoaderData();
-  const { snapshot, snapshotDate } = loaderData;
+  const { data, snapshot, snapshotDate } = useLoaderData();
 
-  // Se snapshot: data è già risolta (json), non serve Await
-  if (snapshotDate) {
-    return (
-      <Page title="Inventario">
-        <TitleBar title="Inventario" />
-        <BlockStack gap="500">
-          <InventarioContent data={loaderData.data} snapshotData={snapshot} snapshotDate={snapshotDate} />
-        </BlockStack>
-      </Page>
-    );
-  }
-
-  // Modalità live: data è deferred
   return (
     <Page title="Inventario">
       <TitleBar title="Inventario" />
       <BlockStack gap="500">
-        <Suspense fallback={<LoadingSkeleton />}>
-          <Await resolve={loaderData.data}>
-            {(resolvedData) => (
-              <InventarioContent data={resolvedData} snapshotData={null} snapshotDate={null} />
-            )}
-          </Await>
-        </Suspense>
+        <InventarioContent data={data} snapshotData={snapshot} snapshotDate={snapshotDate} />
       </BlockStack>
     </Page>
   );
