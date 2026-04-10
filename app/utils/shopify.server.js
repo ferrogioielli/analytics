@@ -260,7 +260,7 @@ export async function fetchInventorySnapshot(admin, date) {
   const dayBefore = d.toISOString().slice(0, 10);
   const query = `FROM inventory
     SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value
-    WHERE inventory_is_tracked = true AND product_status = 'ACTIVE' AND ending_inventory_units > 0
+    WHERE inventory_is_tracked = true
     GROUP BY product_vendor WITH TOTALS
     SINCE ${dayBefore} UNTIL ${date}
     ORDER BY ending_inventory_value DESC
@@ -272,20 +272,25 @@ export async function fetchInventorySnapshot(admin, date) {
 
   const num = (v) => parseFloat(String(v).replace(/[^0-9.\-]/g, "")) || 0;
 
-  // I totali sono nelle colonne __totals (ripetuti in ogni riga)
-  const first = rows[0];
-  const totals = {
-    units: num(first.ending_inventory_units__totals ?? first.ending_inventory_units),
-    costValue: num(first.ending_inventory_value__totals ?? first.ending_inventory_value),
-    retailValue: num(first.ending_inventory_retail_value__totals ?? first.ending_inventory_retail_value),
-  };
+  // Filtra brand con units > 0 (escludi esauriti)
+  const byBrand = rows
+    .filter((r) => num(r.ending_inventory_units) > 0)
+    .map((r) => ({
+      brand: r.product_vendor || "Senza brand",
+      units: num(r.ending_inventory_units),
+      costValue: num(r.ending_inventory_value),
+      retailValue: num(r.ending_inventory_retail_value),
+    }));
 
-  const byBrand = rows.map((r) => ({
-    brand: r.product_vendor || "Senza brand",
-    units: num(r.ending_inventory_units),
-    costValue: num(r.ending_inventory_value),
-    retailValue: num(r.ending_inventory_retail_value),
-  }));
+  // Ricalcola totali solo sui brand filtrati (con stock > 0)
+  const totals = byBrand.reduce(
+    (acc, b) => ({
+      units: acc.units + b.units,
+      costValue: acc.costValue + b.costValue,
+      retailValue: acc.retailValue + b.retailValue,
+    }),
+    { units: 0, costValue: 0, retailValue: 0 },
+  );
 
   return { totals, byBrand };
 }
