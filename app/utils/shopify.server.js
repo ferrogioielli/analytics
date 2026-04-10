@@ -260,7 +260,7 @@ export async function fetchInventorySnapshot(admin, date) {
   const dayBefore = d.toISOString().slice(0, 10);
   const query = `FROM inventory
     SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value
-    WHERE inventory_is_tracked = true
+    WHERE inventory_is_tracked = true AND product_status = 'ACTIVE' AND ending_inventory_units > 0
     GROUP BY product_vendor WITH TOTALS
     SINCE ${dayBefore} UNTIL ${date}
     ORDER BY ending_inventory_value DESC

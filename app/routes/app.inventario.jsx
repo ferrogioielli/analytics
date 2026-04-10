@@ -172,6 +172,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
     if (filterVendors.length < vendors.length && !filterVendors.includes(v.vendor)) return false;
     if (filterTypes.length < types.length && !filterTypes.includes(v.productType)) return false;
     if (filterStatus && v.status !== filterStatus) return false;
+    if (v.qty < 1) return false;
     if (filterTags.length < allTags.length) {
       const excluded = allTags.filter((t) => !filterTags.includes(t));
       if (excluded.some((t) => v.tags.includes(t))) return false;
