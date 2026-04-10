@@ -57,17 +57,21 @@ export const loader = async ({ request }) => {
     return { variants, vendors, types, allTags };
   })();
 
+  const today = new Date().toISOString().slice(0, 10);
+  const isToday = snapshotDate === today;
+  const effectiveSnapshotDate = isToday ? null : snapshotDate;
+
   let snapshotData = null;
-  if (snapshotDate) {
+  if (effectiveSnapshotDate) {
     try {
-      snapshotData = await fetchInventorySnapshot(admin, snapshotDate);
+      snapshotData = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
     } catch (err) {
       snapshotData = { error: err.message || "Errore nel recupero dati storici" };
     }
   }
 
   const data = await dataPromise;
-  return json({ data, snapshot: snapshotData, snapshotDate });
+  return json({ data, snapshot: snapshotData, snapshotDate: effectiveSnapshotDate });
 };
 
 function exportCSV(rows, filename) {
@@ -324,7 +328,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
 
           {isSnapshot && (
             <Text as="p" variant="bodySm" tone="info">
-              Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })}
+              Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include tutto l'inventario tracciato (ShopifyQL non filtra per stato prodotto)
             </Text>
           )}
 
