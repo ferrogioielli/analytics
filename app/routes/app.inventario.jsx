@@ -68,19 +68,28 @@ export const loader = async ({ request }) => {
     try {
       const snapshotRows = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
 
-      // Set dei productId attualmente ACTIVE (da fetchProducts già caricato)
-      // Nota: applichiamo lo stato ATTUALE come proxy dello stato storico.
-      // Trade-off accettato: prodotti oggi DRAFT/ARCHIVED o eliminati non compaiono nello storico,
-      // anche se alla data scelta erano ACTIVE.
-      const activeProductIds = new Set();
+      // Mappa productId → { status corrente, qty totale corrente }
+      // Usata per approssimare lo stato storico del prodotto con una regola a 4 casi:
+      //  - ACTIVE oggi                   → includi (era quasi certamente ACTIVE anche prima)
+      //  - DRAFT oggi + qty=0            → venduto di recente, era ACTIVE prima → includi
+      //  - DRAFT oggi + qty>0            → bozza manuale, non in vendita → escludi
+      //  - ARCHIVED / prodotto eliminato → escludi
+      const productStateMap = new Map();
       for (const v of data.variants) {
-        if (v.status === "ACTIVE") activeProductIds.add(v.productId);
+        if (!productStateMap.has(v.productId)) {
+          productStateMap.set(v.productId, { status: v.status, currentQty: 0 });
+        }
+        productStateMap.get(v.productId).currentQty += v.qty;
       }
 
-      // Filtra le righe snapshot ai soli prodotti attualmente ACTIVE
-      const filteredRows = snapshotRows.filter(
-        (r) => r.productId && activeProductIds.has(r.productId),
-      );
+      const filteredRows = snapshotRows.filter((r) => {
+        if (!r.productId) return false;
+        const state = productStateMap.get(r.productId);
+        if (!state) return false; // prodotto eliminato da Shopify
+        if (state.status === "ACTIVE") return true;
+        if (state.status === "DRAFT" && state.currentQty === 0) return true;
+        return false; // DRAFT con stock (manuale) o ARCHIVED
+      });
 
       // Ri-aggrega per brand
       const byBrandMap = new Map();
@@ -401,7 +410,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
           {isSnapshot && (
             <>
               <Text as="p" variant="bodySm" tone="info">
-                Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — solo prodotti attualmente ACTIVE. Prodotti oggi in bozza, archiviati o eliminati non compaiono anche se alla data avevano stock.
+                Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include i prodotti che erano in magazzino a quella data, anche se poi li hai venduti. Esclusi i prodotti archiviati, le bozze manuali e i prodotti eliminati.
               </Text>
               {snapshotBrands.length > 0 && (
                 <InlineStack gap="300" wrap blockAlign="start">
