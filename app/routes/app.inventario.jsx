@@ -10,11 +10,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import { fetchProducts, fetchInventorySnapshot } from "../utils/shopify.server";
 import { formatCurrency } from "../utils/format";
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const snapshotDate = url.searchParams.get("snapshot") || null;
 
@@ -66,48 +67,69 @@ export const loader = async ({ request }) => {
   let snapshotData = null;
   if (effectiveSnapshotDate) {
     try {
-      const snapshotRows = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
+      // Tenta prima dal DB (InventorySnapshot): dati PRECISI, presi da fotografia notturna
+      const snapshotDateObj = new Date(`${effectiveSnapshotDate}T00:00:00Z`);
+      const dbRows = await prisma.inventorySnapshot.findMany({
+        where: { snapshotDate: snapshotDateObj, shop: session.shop },
+        orderBy: { stockValueCost: "desc" },
+      });
 
-      // Mappa productId → metadata corrente del prodotto (status, qty, tipo, tag)
-      // Usata per approssimare lo stato storico con regola a 4 casi (ACTIVE/DRAFT+qty0 → include,
-      // DRAFT+qty>0 / ARCHIVED / eliminato → escludi) e per esporre tipo/tag ai filtri snapshot.
-      const productStateMap = new Map();
-      for (const v of data.variants) {
-        if (!productStateMap.has(v.productId)) {
-          productStateMap.set(v.productId, {
-            status: v.status,
-            currentQty: 0,
-            productType: v.productType || "",
-            tags: v.tags || [],
-          });
-        }
-        productStateMap.get(v.productId).currentQty += v.qty;
-      }
-
-      // Righe per-prodotto arricchite con tipo e tag attuali (usate poi dal client per filtri)
-      const snapshotProducts = snapshotRows
-        .filter((r) => {
-          if (!r.productId) return false;
-          const state = productStateMap.get(r.productId);
-          if (!state) return false; // prodotto eliminato da Shopify
-          if (state.status === "ACTIVE") return true;
-          if (state.status === "DRAFT" && state.currentQty === 0) return true;
-          return false; // DRAFT con stock (manuale) o ARCHIVED
-        })
-        .map((r) => {
-          const state = productStateMap.get(r.productId);
-          return {
+      if (dbRows.length > 0) {
+        // Filtro storico reale: status al giorno scelto = ACTIVE + totalQty > 0
+        const snapshotProducts = dbRows
+          .filter((r) => r.status === "ACTIVE" && r.totalQty > 0)
+          .map((r) => ({
             productId: r.productId,
-            brand: r.brand,
-            productType: state.productType,
-            tags: state.tags,
-            units: r.units,
-            costValue: r.costValue,
-            retailValue: r.retailValue,
-          };
-        });
+            brand: r.vendor || "Senza brand",
+            productType: r.productType || "",
+            tags: r.tags || [],
+            units: r.totalQty,
+            costValue: r.stockValueCost,
+            retailValue: r.stockValueRetail,
+          }));
 
-      snapshotData = { products: snapshotProducts };
+        snapshotData = { products: snapshotProducts, source: "db" };
+      } else {
+        // Fallback: ShopifyQL + regola a 4 casi (approssimazione con stato attuale)
+        const snapshotRows = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
+
+        const productStateMap = new Map();
+        for (const v of data.variants) {
+          if (!productStateMap.has(v.productId)) {
+            productStateMap.set(v.productId, {
+              status: v.status,
+              currentQty: 0,
+              productType: v.productType || "",
+              tags: v.tags || [],
+            });
+          }
+          productStateMap.get(v.productId).currentQty += v.qty;
+        }
+
+        const snapshotProducts = snapshotRows
+          .filter((r) => {
+            if (!r.productId) return false;
+            const state = productStateMap.get(r.productId);
+            if (!state) return false;
+            if (state.status === "ACTIVE") return true;
+            if (state.status === "DRAFT" && state.currentQty === 0) return true;
+            return false;
+          })
+          .map((r) => {
+            const state = productStateMap.get(r.productId);
+            return {
+              productId: r.productId,
+              brand: r.brand,
+              productType: state.productType,
+              tags: state.tags,
+              units: r.units,
+              costValue: r.costValue,
+              retailValue: r.retailValue,
+            };
+          });
+
+        snapshotData = { products: snapshotProducts, source: "shopifyql" };
+      }
     } catch (err) {
       snapshotData = { error: err.message || "Errore nel recupero dati storici" };
     }
@@ -452,8 +474,20 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
 
           {isSnapshot && (
             <>
-              <Text as="p" variant="bodySm" tone="info">
-                Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include i prodotti che erano in magazzino a quella data, anche se poi li hai venduti. Esclusi i prodotti archiviati, le bozze manuali e i prodotti eliminati.
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="p" variant="bodySm" tone="info">
+                  Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })}
+                </Text>
+                {snapshotData?.source === "db" ? (
+                  <Badge tone="success">Fotografia precisa</Badge>
+                ) : (
+                  <Badge tone="attention">Dati approssimati</Badge>
+                )}
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {snapshotData?.source === "db"
+                  ? "Presi dalla fotografia giornaliera salvata in automatico quella notte. Stato, qty, brand, tipo e tag sono quelli reali di quel giorno."
+                  : "Stimati da ShopifyQL + regola sullo stato attuale dei prodotti. Per quella data non esiste ancora una fotografia salvata. Le fotografie partono dalla prossima notte e da lì in avanti i dati saranno precisi."}
               </Text>
               <InlineStack gap="300" wrap blockAlign="start">
                 {snapshotBrands.length > 0 && (

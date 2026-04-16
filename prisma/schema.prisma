@@ -27,3 +27,28 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+// Fotografia giornaliera dell'inventario: una riga per prodotto per giorno.
+// Popolata da un cron notturno, consultata dal loader Magazzino per date passate
+// per avere dati 100% precisi (invece dell'approssimazione via ShopifyQL).
+model InventorySnapshot {
+  id               Int      @id @default(autoincrement())
+  snapshotDate     DateTime @db.Date
+  shop             String
+  productId        String   // GID Shopify: gid://shopify/Product/12345
+  title            String
+  vendor           String
+  productType      String
+  tags             String[]
+  status           String   // ACTIVE / DRAFT / ARCHIVED
+  totalQty         Int
+  stockValueCost   Float    @default(0)
+  stockValueRetail Float    @default(0)
+  avgPrice         Float    @default(0)
+  createdAt        DateTime @default(now())
+
+  @@unique([snapshotDate, shop, productId])
+  @@index([snapshotDate, shop])
+  @@index([snapshotDate, shop, vendor])
+  @@index([snapshotDate, shop, status])
+}
