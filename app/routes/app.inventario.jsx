@@ -68,55 +68,46 @@ export const loader = async ({ request }) => {
     try {
       const snapshotRows = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
 
-      // Mappa productId → { status corrente, qty totale corrente }
-      // Usata per approssimare lo stato storico del prodotto con una regola a 4 casi:
-      //  - ACTIVE oggi                   → includi (era quasi certamente ACTIVE anche prima)
-      //  - DRAFT oggi + qty=0            → venduto di recente, era ACTIVE prima → includi
-      //  - DRAFT oggi + qty>0            → bozza manuale, non in vendita → escludi
-      //  - ARCHIVED / prodotto eliminato → escludi
+      // Mappa productId → metadata corrente del prodotto (status, qty, tipo, tag)
+      // Usata per approssimare lo stato storico con regola a 4 casi (ACTIVE/DRAFT+qty0 → include,
+      // DRAFT+qty>0 / ARCHIVED / eliminato → escludi) e per esporre tipo/tag ai filtri snapshot.
       const productStateMap = new Map();
       for (const v of data.variants) {
         if (!productStateMap.has(v.productId)) {
-          productStateMap.set(v.productId, { status: v.status, currentQty: 0 });
+          productStateMap.set(v.productId, {
+            status: v.status,
+            currentQty: 0,
+            productType: v.productType || "",
+            tags: v.tags || [],
+          });
         }
         productStateMap.get(v.productId).currentQty += v.qty;
       }
 
-      const filteredRows = snapshotRows.filter((r) => {
-        if (!r.productId) return false;
-        const state = productStateMap.get(r.productId);
-        if (!state) return false; // prodotto eliminato da Shopify
-        if (state.status === "ACTIVE") return true;
-        if (state.status === "DRAFT" && state.currentQty === 0) return true;
-        return false; // DRAFT con stock (manuale) o ARCHIVED
-      });
+      // Righe per-prodotto arricchite con tipo e tag attuali (usate poi dal client per filtri)
+      const snapshotProducts = snapshotRows
+        .filter((r) => {
+          if (!r.productId) return false;
+          const state = productStateMap.get(r.productId);
+          if (!state) return false; // prodotto eliminato da Shopify
+          if (state.status === "ACTIVE") return true;
+          if (state.status === "DRAFT" && state.currentQty === 0) return true;
+          return false; // DRAFT con stock (manuale) o ARCHIVED
+        })
+        .map((r) => {
+          const state = productStateMap.get(r.productId);
+          return {
+            productId: r.productId,
+            brand: r.brand,
+            productType: state.productType,
+            tags: state.tags,
+            units: r.units,
+            costValue: r.costValue,
+            retailValue: r.retailValue,
+          };
+        });
 
-      // Ri-aggrega per brand
-      const byBrandMap = new Map();
-      for (const r of filteredRows) {
-        const key = r.brand;
-        if (!byBrandMap.has(key)) {
-          byBrandMap.set(key, { brand: key, units: 0, costValue: 0, retailValue: 0 });
-        }
-        const b = byBrandMap.get(key);
-        b.units += r.units;
-        b.costValue += r.costValue;
-        b.retailValue += r.retailValue;
-      }
-      const byBrand = Array.from(byBrandMap.values()).sort(
-        (a, b) => b.costValue - a.costValue,
-      );
-
-      const totals = byBrand.reduce(
-        (acc, b) => ({
-          units: acc.units + b.units,
-          costValue: acc.costValue + b.costValue,
-          retailValue: acc.retailValue + b.retailValue,
-        }),
-        { units: 0, costValue: 0, retailValue: 0 },
-      );
-
-      snapshotData = { totals, byBrand };
+      snapshotData = { products: snapshotProducts };
     } catch (err) {
       snapshotData = { error: err.message || "Errore nel recupero dati storici" };
     }
@@ -342,32 +333,79 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
   const goToSnapshot = (d) => { setSearchParams({ snapshot: d }); };
   const goToLive = () => { setSearchParams({}); };
 
-  // ─── Filtro Brand per vista storica (snapshot) ─────────────────────────────
+  // ─── Filtri Brand / Tipo / Tag per vista storica (snapshot) ────────────────
+  // Liste derivate dai prodotti dello snapshot (tipo e tag sono valori ATTUALI dei prodotti).
   const snapshotBrands = useMemo(
-    () => (isSnapshot && snapshotData ? [...snapshotData.byBrand.map((b) => b.brand)].sort() : []),
+    () => (isSnapshot && snapshotData?.products
+      ? [...new Set(snapshotData.products.map((p) => p.brand))].sort()
+      : []),
     [isSnapshot, snapshotData],
   );
+  const snapshotTypes = useMemo(
+    () => (isSnapshot && snapshotData?.products
+      ? [...new Set(snapshotData.products.map((p) => p.productType).filter(Boolean))].sort()
+      : []),
+    [isSnapshot, snapshotData],
+  );
+  const snapshotTagsList = useMemo(
+    () => (isSnapshot && snapshotData?.products
+      ? [...new Set(snapshotData.products.flatMap((p) => p.tags || []))].sort()
+      : []),
+    [isSnapshot, snapshotData],
+  );
+
   const [filterSnapshotVendors, setFilterSnapshotVendors] = useState([]);
-  useEffect(() => {
-    setFilterSnapshotVendors(snapshotBrands);
-  }, [snapshotBrands]);
+  const [filterSnapshotTypes, setFilterSnapshotTypes] = useState([]);
+  const [filterSnapshotTags, setFilterSnapshotTags] = useState([]);
+  useEffect(() => { setFilterSnapshotVendors(snapshotBrands); }, [snapshotBrands]);
+  useEffect(() => { setFilterSnapshotTypes(snapshotTypes); }, [snapshotTypes]);
+  useEffect(() => { setFilterSnapshotTags(snapshotTagsList); }, [snapshotTagsList]);
 
   const filteredSnapshot = useMemo(() => {
-    if (!isSnapshot || !snapshotData) return null;
-    const byBrand = filterSnapshotVendors.length === snapshotBrands.length
-      ? snapshotData.byBrand
-      : snapshotData.byBrand.filter((b) => filterSnapshotVendors.includes(b.brand));
-    const totals = byBrand.reduce(
-      (acc, b) => ({
-        units: acc.units + b.units,
-        costValue: acc.costValue + b.costValue,
-        retailValue: acc.retailValue + b.retailValue,
+    if (!isSnapshot || !snapshotData?.products) return null;
+
+    const filteredProducts = snapshotData.products.filter((p) => {
+      if (filterSnapshotVendors.length < snapshotBrands.length
+          && !filterSnapshotVendors.includes(p.brand)) return false;
+      if (filterSnapshotTypes.length < snapshotTypes.length
+          && !filterSnapshotTypes.includes(p.productType || "")) return false;
+      if (filterSnapshotTags.length < snapshotTagsList.length) {
+        const excluded = snapshotTagsList.filter((t) => !filterSnapshotTags.includes(t));
+        if (excluded.some((t) => (p.tags || []).includes(t))) return false;
+      }
+      return true;
+    });
+
+    const byBrandMap = new Map();
+    for (const p of filteredProducts) {
+      if (!byBrandMap.has(p.brand)) {
+        byBrandMap.set(p.brand, { brand: p.brand, units: 0, costValue: 0, retailValue: 0 });
+      }
+      const b = byBrandMap.get(p.brand);
+      b.units += p.units;
+      b.costValue += p.costValue;
+      b.retailValue += p.retailValue;
+    }
+    const byBrand = Array.from(byBrandMap.values()).sort((a, b) => b.costValue - a.costValue);
+
+    const totals = filteredProducts.reduce(
+      (acc, p) => ({
+        units: acc.units + p.units,
+        costValue: acc.costValue + p.costValue,
+        retailValue: acc.retailValue + p.retailValue,
       }),
       { units: 0, costValue: 0, retailValue: 0 },
     );
+
     return { byBrand, totals };
-  }, [isSnapshot, snapshotData, filterSnapshotVendors, snapshotBrands]);
-  const isSnapshotFiltered = isSnapshot && filterSnapshotVendors.length < snapshotBrands.length;
+  }, [isSnapshot, snapshotData, filterSnapshotVendors, filterSnapshotTypes, filterSnapshotTags,
+      snapshotBrands, snapshotTypes, snapshotTagsList]);
+
+  const isSnapshotFiltered = isSnapshot && (
+    filterSnapshotVendors.length < snapshotBrands.length ||
+    filterSnapshotTypes.length < snapshotTypes.length ||
+    filterSnapshotTags.length < snapshotTagsList.length
+  );
 
   return (
     <>
@@ -387,8 +425,13 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
             <Text as="h2" variant="headingMd">Filtri</Text>
             {((!isSnapshot && isFiltered) || isSnapshotFiltered) && (
               <Button size="slim" plain onClick={() => {
-                if (isSnapshot) setFilterSnapshotVendors(snapshotBrands);
-                else resetFilters();
+                if (isSnapshot) {
+                  setFilterSnapshotVendors(snapshotBrands);
+                  setFilterSnapshotTypes(snapshotTypes);
+                  setFilterSnapshotTags(snapshotTagsList);
+                } else {
+                  resetFilters();
+                }
               }}>Azzera filtri</Button>
             )}
           </InlineStack>
@@ -412,8 +455,8 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
               <Text as="p" variant="bodySm" tone="info">
                 Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include i prodotti che erano in magazzino a quella data, anche se poi li hai venduti. Esclusi i prodotti archiviati, le bozze manuali e i prodotti eliminati.
               </Text>
-              {snapshotBrands.length > 0 && (
-                <InlineStack gap="300" wrap blockAlign="start">
+              <InlineStack gap="300" wrap blockAlign="start">
+                {snapshotBrands.length > 0 && (
                   <div style={{ minWidth: 200 }}>
                     <MultiSelect
                       label="Brand"
@@ -424,10 +467,34 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
                       allValues={snapshotBrands}
                     />
                   </div>
-                </InlineStack>
-              )}
+                )}
+                {snapshotTypes.length > 0 && (
+                  <div style={{ minWidth: 200 }}>
+                    <MultiSelect
+                      label="Tipo prodotto"
+                      allLabel="Tutti i tipi"
+                      options={snapshotTypes.map((t) => ({ label: t, value: t }))}
+                      selected={filterSnapshotTypes}
+                      onChange={setFilterSnapshotTypes}
+                      allValues={snapshotTypes}
+                    />
+                  </div>
+                )}
+                {snapshotTagsList.length > 0 && (
+                  <div style={{ minWidth: 200 }}>
+                    <MultiSelect
+                      label="Tag"
+                      allLabel="Tutti i tag"
+                      options={snapshotTagsList.map((t) => ({ label: t, value: t }))}
+                      selected={filterSnapshotTags}
+                      onChange={setFilterSnapshotTags}
+                      allValues={snapshotTagsList}
+                    />
+                  </div>
+                )}
+              </InlineStack>
               <Text as="p" variant="bodySm" tone="subdued">
-                I filtri Tipo prodotto e Tag non sono disponibili su dati storici (ShopifyQL aggrega solo per brand).
+                I filtri Tipo prodotto e Tag usano i valori attuali del prodotto (Shopify non conserva lo storico di tipo/tag).
               </Text>
             </>
           )}
