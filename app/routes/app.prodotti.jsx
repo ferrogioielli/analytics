@@ -106,12 +106,8 @@ function LoadingSkeleton() {
   return (
     <>
       <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
-      {/* KPI cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        {[1,2,3].map(i => (
-          <Card key={i}><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>
-        ))}
-      </div>
+      {/* KPI card */}
+      <Card><BlockStack gap="100"><div style={box("40%",14)} /><div style={box("60%",28)} /></BlockStack></Card>
       {/* Brand distribution */}
       <Card><BlockStack gap="300"><div style={box("40%",20)} /><div style={box("100%",200)} /></BlockStack></Card>
       {/* Filters */}
@@ -180,7 +176,6 @@ function ProdottiContent({ data, shop }) {
   };
 
   const filteredInventory = filtered.reduce((s, p) => s + (p.totalQty || 0), 0);
-  const filteredVendors = [...new Set(filtered.map((p) => p.vendor).filter(Boolean))].length;
 
   const shopName = shop.replace(".myshopify.com", "");
 
@@ -239,20 +234,16 @@ function ProdottiContent({ data, shop }) {
       </InlineStack>
 
       {/* ── KPI ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        {[
-          { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
-          { label: isFiltered ? "Stock — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
-          { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
-        ].map(({ label, value }) => (
-          <Card key={label}>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-              <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
-            </BlockStack>
-          </Card>
-        ))}
-      </div>
+      <Card>
+        <BlockStack gap="100">
+          <Text as="p" variant="bodySm" tone="subdued">
+            {isFiltered ? "Pezzi in magazzino — filtrati" : "Pezzi in magazzino"}
+          </Text>
+          <Text as="p" variant="headingLg" fontWeight="bold">
+            {filteredInventory.toLocaleString("it-IT")}
+          </Text>
+        </BlockStack>
+      </Card>
 
       {/* ── DISTRIBUZIONE BRAND ── */}
       {byBrand.length > 0 && (

@@ -397,7 +397,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
       {isSnapshot ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
           <Card><BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Pezzi in stock</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Pezzi in magazzino</Text>
             <Text as="p" variant="headingLg" fontWeight="bold">{snapshotData.totals.units.toLocaleString("it-IT")}</Text>
           </BlockStack></Card>
           <Card><BlockStack gap="100">
@@ -412,7 +412,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
           {[
-            { label: `Pezzi in stock${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
+            { label: `Pezzi in magazzino${isFiltered ? " — filtrato" : ""}`, value: filteredTotalQty.toLocaleString("it-IT") },
             { label: `Valore magazzino (costo)${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredTotalValue) },
             { label: `Valore a prezzo vendita${isFiltered ? " — filtrato" : ""}`, value: formatCurrency(filteredSalesValue) },
             {
