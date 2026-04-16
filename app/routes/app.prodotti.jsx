@@ -2,8 +2,8 @@ import { useLoaderData, Await } from "@remix-run/react";
 import { defer } from "@remix-run/node";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
-  Page, Card, BlockStack, InlineStack, Text, Button, Badge, Link,
-  DataTable, Select, Thumbnail, TextField, Popover, OptionList,
+  Page, Card, BlockStack, InlineStack, Text, Button, Link,
+  DataTable, Thumbnail, TextField, Popover, OptionList,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -15,7 +15,17 @@ export const loader = async ({ request }) => {
   const shop = session.shop;
 
   const dataPromise = (async () => {
-    const products = await fetchProducts(admin);
+    const allProducts = await fetchProducts(admin);
+
+    // Considera solo prodotti attivi con stock effettivamente presente (somma varianti > 0)
+    const products = allProducts.filter((p) => {
+      if (p.status !== "ACTIVE") return false;
+      const qty = (p.variants?.edges || []).reduce(
+        (s, e) => s + (e.node.inventoryQuantity || 0),
+        0,
+      );
+      return qty > 0;
+    });
 
     const brandMap = new Map();
     for (const p of products) {
@@ -88,7 +98,7 @@ function MultiSelect({ label, allLabel, options, selected, onChange, allValues }
 }
 
 const PAGE_SIZE = 50;
-const SORT_KEYS = [null, "vendor", "productType", "status", "variantCount", "totalQty", "avgPrice"];
+const SORT_KEYS = [null, "vendor", "productType", "variantCount", "totalQty", "avgPrice"];
 
 // ─── LOADING SKELETON ─────────────────────────────────────────────────────────
 function LoadingSkeleton() {
@@ -97,8 +107,8 @@ function LoadingSkeleton() {
     <>
       <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }`}</style>
       {/* KPI cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-        {[1,2,3,4].map(i => (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        {[1,2,3].map(i => (
           <Card key={i}><BlockStack gap="100"><div style={box("60%",14)} /><div style={box("80%",28)} /></BlockStack></Card>
         ))}
       </div>
@@ -119,7 +129,6 @@ function ProdottiContent({ data, shop }) {
   const [filterVendors, setFilterVendors] = useState(() => vendors);
   const [filterTypes, setFilterTypes] = useState(() => types);
   const [filterTags, setFilterTags] = useState(() => allTags);
-  const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(0);
   const [sortDir, setSortDir] = useState("ascending");
@@ -138,13 +147,12 @@ function ProdottiContent({ data, shop }) {
     if (search && !p.title.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterVendors.length < vendors.length && !filterVendors.includes(p.vendor || "")) return false;
     if (filterTypes.length < types.length && !filterTypes.includes(p.productType || "")) return false;
-    if (filterStatus && p.status !== filterStatus) return false;
     if (filterTags.length < allTags.length) {
       const excluded = allTags.filter((t) => !filterTags.includes(t));
       if (excluded.some((t) => (p.tags || []).includes(t))) return false;
     }
     return true;
-  }), [enriched, search, filterVendors, filterTypes, filterStatus, filterTags, vendors, types, allTags]);
+  }), [enriched, search, filterVendors, filterTypes, filterTags, vendors, types, allTags]);
 
   const sorted = useMemo(() => {
     const key = SORT_KEYS[sortCol];
@@ -169,11 +177,9 @@ function ProdottiContent({ data, shop }) {
     setFilterVendors(vendors);
     setFilterTypes(types);
     setFilterTags(allTags);
-    setFilterStatus("");
   };
 
-  const filteredActive = filtered.filter((p) => p.status === "ACTIVE").length;
-  const filteredInventory = filtered.reduce((s, p) => s + (p.totalInventory || 0), 0);
+  const filteredInventory = filtered.reduce((s, p) => s + (p.totalQty || 0), 0);
   const filteredVendors = [...new Set(filtered.map((p) => p.vendor).filter(Boolean))].length;
 
   const shopName = shop.replace(".myshopify.com", "");
@@ -200,9 +206,6 @@ function ProdottiContent({ data, shop }) {
       </div>,
       p.vendor || "—",
       p.productType || "—",
-      <Badge key={p.id + "s"} tone={p.status === "ACTIVE" ? "success" : p.status === "DRAFT" ? "attention" : "critical"}>
-        {p.status === "ACTIVE" ? "Attivo" : p.status === "DRAFT" ? "Bozza" : "Archiviato"}
-      </Badge>,
       p.variantCount.toString(),
       <span key={p.id + "qty"} style={{ color: p.totalQty <= 0 ? "#d82c0d" : p.totalQty <= 5 ? "#b98900" : "#008060", fontWeight: 500 }}>
         {p.totalQty}
@@ -216,7 +219,6 @@ function ProdottiContent({ data, shop }) {
     Brand: p.vendor || "",
     Tipo: p.productType || "",
     Tag: (p.tags || []).join(", "),
-    Status: p.status,
     Varianti: p.variantCount,
     "Stock totale": p.totalQty,
     "Prezzo medio": p.avgPrice.toFixed(2),
@@ -225,12 +227,6 @@ function ProdottiContent({ data, shop }) {
   const vendorOptionList = vendors.map((v) => ({ label: v, value: v }));
   const typeOptionList = types.map((t) => ({ label: t, value: t }));
   const tagOptionList = allTags.map((t) => ({ label: t, value: t }));
-  const statusOptions = [
-    { label: "Tutti gli stati", value: "" },
-    { label: "Attivo", value: "ACTIVE" },
-    { label: "Bozza", value: "DRAFT" },
-    { label: "Archiviato", value: "ARCHIVED" },
-  ];
 
   return (
     <>
@@ -243,10 +239,9 @@ function ProdottiContent({ data, shop }) {
       </InlineStack>
 
       {/* ── KPI ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
         {[
           { label: isFiltered ? "Prodotti filtrati" : "Prodotti totali", value: filtered.length },
-          { label: isFiltered ? "Attivi — filtrati" : "Prodotti attivi", value: filteredActive },
           { label: isFiltered ? "Stock — filtrati" : "Stock totale", value: filteredInventory.toLocaleString("it-IT") },
           { label: isFiltered ? "Brand — filtrati" : "Brand distinti", value: filteredVendors },
         ].map(({ label, value }) => (
@@ -304,9 +299,6 @@ function ProdottiContent({ data, shop }) {
                 label="Cerca" placeholder="Nome prodotto..."
                 value={search} onChange={setSearch} autoComplete="off"
               />
-            </div>
-            <div style={{ minWidth: 180 }}>
-              <Select label="Stato" options={statusOptions} value={filterStatus} onChange={setFilterStatus} />
             </div>
           </InlineStack>
 
@@ -379,10 +371,10 @@ function ProdottiContent({ data, shop }) {
             <Text as="p" tone="subdued">Nessun prodotto trovato con i filtri selezionati.</Text>
           ) : (
             <DataTable
-              columnContentTypes={["text", "text", "text", "text", "numeric", "numeric", "numeric"]}
-              headings={["Prodotto", "Brand", "Tipo", "Status", "Varianti", "Stock", "Prezzo medio"]}
+              columnContentTypes={["text", "text", "text", "numeric", "numeric", "numeric"]}
+              headings={["Prodotto", "Brand", "Tipo", "Varianti", "Stock", "Prezzo medio"]}
               rows={tableRows}
-              sortable={[false, true, true, true, true, true, true]}
+              sortable={[false, true, true, true, true, true]}
               defaultSortDirection="ascending"
               initialSortColumnIndex={0}
               onSort={(col, dir) => { setSortCol(col); setSortDir(dir); }}
