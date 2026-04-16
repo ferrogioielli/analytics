@@ -61,16 +61,58 @@ export const loader = async ({ request }) => {
   const isToday = snapshotDate === today;
   const effectiveSnapshotDate = isToday ? null : snapshotDate;
 
+  const data = await dataPromise;
+
   let snapshotData = null;
   if (effectiveSnapshotDate) {
     try {
-      snapshotData = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
+      const snapshotRows = await fetchInventorySnapshot(admin, effectiveSnapshotDate);
+
+      // Set dei productId attualmente ACTIVE (da fetchProducts già caricato)
+      // Nota: applichiamo lo stato ATTUALE come proxy dello stato storico.
+      // Trade-off accettato: prodotti oggi DRAFT/ARCHIVED o eliminati non compaiono nello storico,
+      // anche se alla data scelta erano ACTIVE.
+      const activeProductIds = new Set();
+      for (const v of data.variants) {
+        if (v.status === "ACTIVE") activeProductIds.add(v.productId);
+      }
+
+      // Filtra le righe snapshot ai soli prodotti attualmente ACTIVE
+      const filteredRows = snapshotRows.filter(
+        (r) => r.productId && activeProductIds.has(r.productId),
+      );
+
+      // Ri-aggrega per brand
+      const byBrandMap = new Map();
+      for (const r of filteredRows) {
+        const key = r.brand;
+        if (!byBrandMap.has(key)) {
+          byBrandMap.set(key, { brand: key, units: 0, costValue: 0, retailValue: 0 });
+        }
+        const b = byBrandMap.get(key);
+        b.units += r.units;
+        b.costValue += r.costValue;
+        b.retailValue += r.retailValue;
+      }
+      const byBrand = Array.from(byBrandMap.values()).sort(
+        (a, b) => b.costValue - a.costValue,
+      );
+
+      const totals = byBrand.reduce(
+        (acc, b) => ({
+          units: acc.units + b.units,
+          costValue: acc.costValue + b.costValue,
+          retailValue: acc.retailValue + b.retailValue,
+        }),
+        { units: 0, costValue: 0, retailValue: 0 },
+      );
+
+      snapshotData = { totals, byBrand };
     } catch (err) {
       snapshotData = { error: err.message || "Errore nel recupero dati storici" };
     }
   }
 
-  const data = await dataPromise;
   return json({ data, snapshot: snapshotData, snapshotDate: effectiveSnapshotDate });
 };
 
@@ -359,7 +401,7 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
           {isSnapshot && (
             <>
               <Text as="p" variant="bodySm" tone="info">
-                Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include tutto l'inventario tracciato (ShopifyQL non filtra per stato prodotto)
+                Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — solo prodotti attualmente ACTIVE. Prodotti oggi in bozza, archiviati o eliminati non compaiono anche se alla data avevano stock.
               </Text>
               {snapshotBrands.length > 0 && (
                 <InlineStack gap="300" wrap blockAlign="start">

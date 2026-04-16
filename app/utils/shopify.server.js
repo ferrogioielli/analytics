@@ -250,7 +250,9 @@ export async function runShopifyQL(admin, query) {
 
 /**
  * Snapshot inventario a una data specifica via ShopifyQL.
- * Ritorna { totals, byBrand[] }.
+ * Ritorna righe per-prodotto: { productId, brand, units, costValue, retailValue }[].
+ * Il chiamante è responsabile di filtrare per stato prodotto (ShopifyQL non lo supporta)
+ * e di aggregare per brand.
  */
 export async function fetchInventorySnapshot(admin, date) {
   // SINCE/UNTIL: ending_inventory = inventario alla fine del periodo
@@ -261,38 +263,27 @@ export async function fetchInventorySnapshot(admin, date) {
   const query = `FROM inventory
     SHOW ending_inventory_units, ending_inventory_value, ending_inventory_retail_value
     WHERE inventory_is_tracked = true
-    GROUP BY product_vendor WITH TOTALS
+    GROUP BY product_id, product_vendor
     SINCE ${dayBefore} UNTIL ${date}
     ORDER BY ending_inventory_value DESC
-    LIMIT 1000`;
+    LIMIT 5000`;
   console.log("ShopifyQL inventory query:", query);
 
   const rows = await runShopifyQL(admin, query);
-  if (!rows.length) return { totals: { units: 0, costValue: 0, retailValue: 0 }, byBrand: [] };
+  if (!rows.length) return [];
 
   const num = (v) => parseFloat(String(v).replace(/[^0-9.\-]/g, "")) || 0;
 
-  // Filtra brand con units > 0 (escludi esauriti)
-  const byBrand = rows
+  // Ritorna righe per-prodotto con qty > 0
+  return rows
     .filter((r) => num(r.ending_inventory_units) > 0)
     .map((r) => ({
+      productId: r.product_id ? `gid://shopify/Product/${r.product_id}` : null,
       brand: r.product_vendor || "Senza brand",
       units: num(r.ending_inventory_units),
       costValue: num(r.ending_inventory_value),
       retailValue: num(r.ending_inventory_retail_value),
     }));
-
-  // Ricalcola totali solo sui brand filtrati (con stock > 0)
-  const totals = byBrand.reduce(
-    (acc, b) => ({
-      units: acc.units + b.units,
-      costValue: acc.costValue + b.costValue,
-      retailValue: acc.retailValue + b.retailValue,
-    }),
-    { units: 0, costValue: 0, retailValue: 0 },
-  );
-
-  return { totals, byBrand };
 }
 
 // ─── PRODOTTI ──────────────────────────────────────────────────────────────────
