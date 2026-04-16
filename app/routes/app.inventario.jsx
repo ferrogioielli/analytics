@@ -291,6 +291,33 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
   const goToSnapshot = (d) => { setSearchParams({ snapshot: d }); };
   const goToLive = () => { setSearchParams({}); };
 
+  // ─── Filtro Brand per vista storica (snapshot) ─────────────────────────────
+  const snapshotBrands = useMemo(
+    () => (isSnapshot && snapshotData ? [...snapshotData.byBrand.map((b) => b.brand)].sort() : []),
+    [isSnapshot, snapshotData],
+  );
+  const [filterSnapshotVendors, setFilterSnapshotVendors] = useState([]);
+  useEffect(() => {
+    setFilterSnapshotVendors(snapshotBrands);
+  }, [snapshotBrands]);
+
+  const filteredSnapshot = useMemo(() => {
+    if (!isSnapshot || !snapshotData) return null;
+    const byBrand = filterSnapshotVendors.length === snapshotBrands.length
+      ? snapshotData.byBrand
+      : snapshotData.byBrand.filter((b) => filterSnapshotVendors.includes(b.brand));
+    const totals = byBrand.reduce(
+      (acc, b) => ({
+        units: acc.units + b.units,
+        costValue: acc.costValue + b.costValue,
+        retailValue: acc.retailValue + b.retailValue,
+      }),
+      { units: 0, costValue: 0, retailValue: 0 },
+    );
+    return { byBrand, totals };
+  }, [isSnapshot, snapshotData, filterSnapshotVendors, snapshotBrands]);
+  const isSnapshotFiltered = isSnapshot && filterSnapshotVendors.length < snapshotBrands.length;
+
   return (
     <>
       {/* ── HEADER ── */}
@@ -307,8 +334,11 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center">
             <Text as="h2" variant="headingMd">Filtri</Text>
-            {(isFiltered || isSnapshot) && (
-              <Button size="slim" plain onClick={() => { resetFilters(); if (isSnapshot) goToLive(); }}>Azzera filtri</Button>
+            {((!isSnapshot && isFiltered) || isSnapshotFiltered) && (
+              <Button size="slim" plain onClick={() => {
+                if (isSnapshot) setFilterSnapshotVendors(snapshotBrands);
+                else resetFilters();
+              }}>Azzera filtri</Button>
             )}
           </InlineStack>
 
@@ -327,9 +357,28 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
           </InlineStack>
 
           {isSnapshot && (
-            <Text as="p" variant="bodySm" tone="info">
-              Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include tutto l'inventario tracciato (ShopifyQL non filtra per stato prodotto)
-            </Text>
+            <>
+              <Text as="p" variant="bodySm" tone="info">
+                Dati storici al {new Date(snapshotDate).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" })} — include tutto l'inventario tracciato (ShopifyQL non filtra per stato prodotto)
+              </Text>
+              {snapshotBrands.length > 0 && (
+                <InlineStack gap="300" wrap blockAlign="start">
+                  <div style={{ minWidth: 200 }}>
+                    <MultiSelect
+                      label="Brand"
+                      allLabel="Tutti i brand"
+                      options={snapshotBrands.map((b) => ({ label: b, value: b }))}
+                      selected={filterSnapshotVendors}
+                      onChange={setFilterSnapshotVendors}
+                      allValues={snapshotBrands}
+                    />
+                  </div>
+                </InlineStack>
+              )}
+              <Text as="p" variant="bodySm" tone="subdued">
+                I filtri Tipo prodotto e Tag non sono disponibili su dati storici (ShopifyQL aggrega solo per brand).
+              </Text>
+            </>
           )}
 
           {!isSnapshot && (
@@ -397,16 +446,16 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
       {isSnapshot ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
           <Card><BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Pezzi in magazzino</Text>
-            <Text as="p" variant="headingLg" fontWeight="bold">{snapshotData.totals.units.toLocaleString("it-IT")}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Pezzi in magazzino{isSnapshotFiltered ? " — filtrato" : ""}</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{filteredSnapshot.totals.units.toLocaleString("it-IT")}</Text>
           </BlockStack></Card>
           <Card><BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Valore (costo)</Text>
-            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(snapshotData.totals.costValue)}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Valore (costo){isSnapshotFiltered ? " — filtrato" : ""}</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(filteredSnapshot.totals.costValue)}</Text>
           </BlockStack></Card>
           <Card><BlockStack gap="100">
-            <Text as="p" variant="bodySm" tone="subdued">Valore (vendita)</Text>
-            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(snapshotData.totals.retailValue)}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Valore (vendita){isSnapshotFiltered ? " — filtrato" : ""}</Text>
+            <Text as="p" variant="headingLg" fontWeight="bold">{formatCurrency(filteredSnapshot.totals.retailValue)}</Text>
           </BlockStack></Card>
         </div>
       ) : (
@@ -433,14 +482,14 @@ function InventarioContent({ data, snapshotData, snapshotDate }) {
       {isSnapshot ? (
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">Riepilogo per brand</Text>
-            {snapshotData.byBrand.length === 0 ? (
+            <Text as="h2" variant="headingMd">Riepilogo per brand{isSnapshotFiltered ? " — filtrato" : ""}</Text>
+            {filteredSnapshot.byBrand.length === 0 ? (
               <Text as="p" tone="subdued">Nessun dato.</Text>
             ) : (
               <DataTable
                 columnContentTypes={["text", "numeric", "numeric", "numeric"]}
                 headings={["Brand", "Pezzi", "Valore costo", "Valore vendita"]}
-                rows={snapshotData.byBrand.map((b) => [
+                rows={filteredSnapshot.byBrand.map((b) => [
                   b.brand,
                   b.units.toLocaleString("it-IT"),
                   formatCurrency(b.costValue),
