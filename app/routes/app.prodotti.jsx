@@ -237,7 +237,7 @@ function ProdottiContent({ data, shop }) {
       <Card>
         <BlockStack gap="100">
           <Text as="p" variant="bodySm" tone="subdued">
-            {isFiltered ? "Pezzi in magazzino — filtrati" : "Pezzi in magazzino"}
+            {isFiltered ? "Prodotti in magazzino — filtrati" : "Prodotti in magazzino"}
           </Text>
           <Text as="p" variant="headingLg" fontWeight="bold">
             {filteredInventory.toLocaleString("it-IT")}
